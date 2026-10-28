@@ -754,6 +754,14 @@
 
   function getAddNoteButton(context) {
     const dialog = context || getActiveModal() || document;
+    // 1. Direct priority queries
+    const directBtn = dialog.querySelector(
+      'button[aria-label*="Add a note" i], ' +
+      'button[aria-label*="add a note" i], ' +
+      'button[aria-label*="add note" i]'
+    );
+    if (directBtn) return directBtn;
+
     const roots = [dialog];
     if (dialog !== document) roots.push(document);
 
@@ -821,7 +829,11 @@
         'button.artdeco-button--primary'
       );
       if (primary && !primary.closest('.msg-overlay-container, .msg-overlay-list-bubble, #messaging, aside')) {
-        return primary;
+        const pText = (primary.innerText || '').toLowerCase();
+        const pAria = (primary.getAttribute('aria-label') || '').toLowerCase();
+        if (!pText.includes('without') && !pAria.includes('without')) {
+          return primary;
+        }
       }
     }
 
@@ -830,11 +842,19 @@
 
   function getSendWithoutNoteButton(context) {
     const dialog = context || getActiveModal() || document;
+    // 1. Direct priority queries
+    const directBtn = dialog.querySelector(
+      'button[aria-label*="Send without a note" i], ' +
+      'button[aria-label*="without a note" i], ' +
+      'button[aria-label*="without note" i]'
+    );
+    if (directBtn) return directBtn;
+
     const roots = [dialog];
     if (dialog !== document) roots.push(document);
 
     for (const root of roots) {
-      const buttons = Array.from(root.querySelectorAll('button, div[role="button"], a'));
+      const buttons = Array.from(root.querySelectorAll('button, div[role="button"], a, span'));
 
       for (const b of buttons) {
         if (b.closest('.msg-overlay-container, .msg-overlay-list-bubble, #messaging, aside')) {
@@ -846,18 +866,25 @@
         if (
           text.includes('without') ||
           aria.includes('without') ||
-          text === 'send now' ||
-          aria === 'send now'
+          text === 'send without a note' ||
+          aria === 'send without a note'
         ) {
-          if (!text.includes('add note') && !aria.includes('add note')) {
-            return b;
+          if (!text.includes('add a note') && !aria.includes('add a note')) {
+            const btn = b.tagName && (b.tagName.toLowerCase() === 'button' || b.getAttribute('role') === 'button')
+              ? b
+              : b.closest('button, div[role="button"]') || b;
+            return btn;
           }
         }
       }
 
       const primary = root.querySelector('button.artdeco-button--primary');
       if (primary && !primary.closest('.msg-overlay-container, .msg-overlay-list-bubble, #messaging, aside')) {
-        return primary;
+        const pText = (primary.innerText || '').toLowerCase();
+        const pAria = (primary.getAttribute('aria-label') || '').toLowerCase();
+        if (!pText.includes('add note') && !pAria.includes('add note')) {
+          return primary;
+        }
       }
     }
 
@@ -901,22 +928,28 @@
   }
 
   function findDirectConnectButton() {
-    const actionsBar = getProfileActionsContainer();
-    if (!actionsBar) return null;
+    const mainCard = getMainProfileCard() || document.querySelector('.scaffold-layout__main section:first-of-type, main section:first-of-type');
+    const actionsBar = getProfileActionsContainer() || mainCard;
+    if (!actionsBar && !mainCard) return null;
 
-    const candidateButtons = Array.from(actionsBar.querySelectorAll('button, div[role="button"], a')).filter(isAllowedHeroButton);
-    for (const btn of candidateButtons) {
-      const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
-      const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+    const roots = [actionsBar];
+    if (mainCard && mainCard !== actionsBar) roots.push(mainCard);
 
-      if (
-        (text === 'connect' || text === '+ connect' || aria === 'connect' || /^invite.*to connect$/i.test(aria) || (aria.includes('invite') && aria.includes('connect'))) &&
-        !text.includes('message') &&
-        !text.includes('following') &&
-        !text.includes('pending')
-      ) {
-        if (!/pending|dismiss|withdraw/i.test(text)) {
-          return btn;
+    for (const root of roots) {
+      const candidateButtons = Array.from(root.querySelectorAll('button, div[role="button"], a')).filter(isAllowedHeroButton);
+      for (const btn of candidateButtons) {
+        const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+        const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+
+        if (
+          (text === 'connect' || text === '+ connect' || aria === 'connect' || /^invite.*to connect$/i.test(aria) || (aria.includes('invite') && aria.includes('connect'))) &&
+          !text.includes('message') &&
+          !text.includes('following') &&
+          !text.includes('pending')
+        ) {
+          if (!/pending|dismiss|withdraw/i.test(text)) {
+            return btn;
+          }
         }
       }
     }
@@ -937,7 +970,7 @@
       }
     }
 
-    // 2. Also search all open dropdown menus and role="menu" across the page
+    // 2. Also search all open dropdown menus across the page
     const globalMenus = Array.from(document.querySelectorAll(
       '.artdeco-dropdown--is-open, .artdeco-dropdown__content, div[role="menu"], ul[role="menu"], .artdeco-dropdown'
     )).filter((m) => !isSidebarElement(m) && !m.closest('.msg-overlay-container, #messaging, .global-nav, aside'));
@@ -945,7 +978,6 @@
     containers.push(...globalMenus);
 
     for (const container of containers) {
-      // Find all clickable candidates inside this dropdown
       const items = Array.from(container.querySelectorAll(
         '.artdeco-dropdown__item, [role="menuitem"], [role="button"], li, button, div, span, a'
       ));
@@ -977,12 +1009,9 @@
         const hasConnectIcon = !!item.querySelector('li-icon[type="connect"], svg[data-test-icon*="connect"], use[href*="connect"]');
 
         if (isConnectText || isConnectAria || hasConnectIcon) {
-          const rect = item.getBoundingClientRect();
-          if (rect.width > 0 && rect.height > 0) {
-            const clickable = item.closest('.artdeco-dropdown__item, [role="menuitem"], [role="button"], li, button') || item;
-            console.log('[LinkedIn AI Connect] 🎯 Found visible Connect item inside dropdown:', clickable);
-            return clickable;
-          }
+          const clickable = item.closest('.artdeco-dropdown__item, [role="menuitem"], [role="button"], li, button') || item;
+          console.log('[LinkedIn AI Connect] 🎯 Found Connect item inside dropdown:', clickable);
+          return clickable;
         }
       }
     }
@@ -1000,11 +1029,7 @@
       if (text.includes('remove') || text.includes('connections') || text.includes('following') || text.includes('report')) continue;
 
       if (text === 'connect' || text === '+ connect' || aria.includes('to connect') || (text.includes('connect') && !text.includes('message'))) {
-        const rect = item.getBoundingClientRect();
-        if (rect.width > 0 && rect.height > 0) {
-          console.log('[LinkedIn AI Connect] 🎯 Found visible Connect menuitem (fallback):', item);
-          return item;
-        }
+        return item;
       }
     }
 
@@ -1012,116 +1037,15 @@
   }
 
   function triggerDropdownClick(btn) {
-    if (!btn) return;
-    try {
-      btn.scrollIntoView({ behavior: 'instant', block: 'center' });
-      btn.focus();
-    } catch (e) {}
-
-    const rect = btn.getBoundingClientRect();
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    const opts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0 };
-
-    try { btn.dispatchEvent(new PointerEvent('pointerdown', Object.assign({ pointerId: 1, pointerType: 'mouse', isPrimary: true }, opts))); } catch (e) {}
-    try { btn.dispatchEvent(new MouseEvent('mousedown', opts)); } catch (e) {}
-    try { btn.dispatchEvent(new PointerEvent('pointerup', Object.assign({ pointerId: 1, pointerType: 'mouse', isPrimary: true }, opts))); } catch (e) {}
-    try { btn.dispatchEvent(new MouseEvent('mouseup', opts)); } catch (e) {}
-    btn.click();
+    triggerClick(btn);
   }
 
   function clickDropdownConnectItem(item) {
-    if (!item) return;
-    console.log('[LinkedIn AI Connect] 🚀 Dispatching click to Connect option in dropdown:', item);
-    try {
-      item.scrollIntoView({ behavior: 'instant', block: 'nearest' });
-      item.focus();
-    } catch (e) {}
-
-    const rect = item.getBoundingClientRect();
-    const cx = rect.left + Math.max(2, rect.width / 2);
-    const cy = rect.top + Math.max(2, rect.height / 2);
-    const opts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0 };
-
-    try { item.dispatchEvent(new PointerEvent('pointerdown', Object.assign({ pointerId: 1, pointerType: 'mouse', isPrimary: true }, opts))); } catch (e) {}
-    try { item.dispatchEvent(new MouseEvent('mousedown', opts)); } catch (e) {}
-    try { item.dispatchEvent(new PointerEvent('pointerup', Object.assign({ pointerId: 1, pointerType: 'mouse', isPrimary: true }, opts))); } catch (e) {}
-    try { item.dispatchEvent(new MouseEvent('mouseup', opts)); } catch (e) {}
-    try { item.click(); } catch (e) {}
-
-    // Also trigger inner span or div if item is wrapper
-    const inner = Array.from(item.querySelectorAll('span, div')).find((s) => (s.innerText || '').toLowerCase().includes('connect'));
-    if (inner && inner !== item) {
-      try {
-        inner.dispatchEvent(new MouseEvent('mousedown', opts));
-        inner.dispatchEvent(new MouseEvent('mouseup', opts));
-        inner.click();
-      } catch (e) {}
-    }
+    triggerClick(item);
   }
 
   function clickConnectItem(el) {
-    if (!el) return;
-    console.log('[LinkedIn AI Connect] 🚀 Dispatching robust click to Connect item:', el);
-
-    try {
-      if (!isSidebarElement(el)) {
-        const rect = el.getBoundingClientRect();
-        if (rect.top < 0 || rect.bottom > window.innerHeight) {
-          el.scrollIntoView({ behavior: 'instant', block: 'nearest' });
-        }
-      }
-      el.focus();
-    } catch (e) {}
-
-    const rect = el.getBoundingClientRect();
-    const cx = rect.left + Math.max(2, rect.width / 2);
-    const cy = rect.top + Math.max(2, rect.height / 2);
-
-    const mouseOptsDown = {
-      bubbles: true,
-      cancelable: true,
-      view: window,
-      detail: 1,
-      screenX: window.screenX + cx,
-      screenY: window.screenY + cy,
-      clientX: cx,
-      clientY: cy,
-      button: 0,
-      buttons: 1
-    };
-
-    const mouseOptsUp = {
-      bubbles: true,
-      cancelable: true,
-      view: window,
-      detail: 1,
-      screenX: window.screenX + cx,
-      screenY: window.screenY + cy,
-      clientX: cx,
-      clientY: cy,
-      button: 0,
-      buttons: 0
-    };
-
-    try {
-      el.dispatchEvent(new PointerEvent('pointerdown', Object.assign({ pointerId: 1, pointerType: 'mouse', isPrimary: true }, mouseOptsDown)));
-    } catch (e) {}
-    try {
-      el.dispatchEvent(new MouseEvent('mousedown', mouseOptsDown));
-    } catch (e) {}
-    try {
-      el.dispatchEvent(new PointerEvent('pointerup', Object.assign({ pointerId: 1, pointerType: 'mouse', isPrimary: true }, mouseOptsUp)));
-    } catch (e) {}
-    try {
-      el.dispatchEvent(new MouseEvent('mouseup', mouseOptsUp));
-    } catch (e) {}
-    try {
-      el.dispatchEvent(new MouseEvent('click', mouseOptsUp));
-    } catch (e) {}
-    try {
-      el.click();
-    } catch (e) {}
+    triggerClick(el);
   }
 
   async function openMoreMenuAndClickConnect() {
@@ -1137,30 +1061,40 @@
     // 2. Check if Connect option is already visible (e.g. dropdown already open)
     let connectItem = findDropdownConnectButton(moreBtn);
 
-    // 3. If not visible, toggle the 3-dots button open cleanly
+    // 3. If not visible, open dropdown cleanly
     if (!connectItem) {
-      console.log('[LinkedIn AI Connect] Clicking "..." (More) button to reveal dropdown...');
-      triggerDropdownClick(moreBtn);
+      const isAlreadyExpanded = moreBtn.getAttribute('aria-expanded') === 'true';
+      if (!isAlreadyExpanded) {
+        console.log('[LinkedIn AI Connect] Opening "..." (More) dropdown...');
+        triggerClick(moreBtn);
+      }
 
-      // Poll up to 3s for the Connect menu item to mount
-      for (let i = 0; i < 30; i++) {
+      // Poll up to 2.5s for the Connect menu item to mount
+      for (let i = 0; i < 25; i++) {
         await sleep(100);
         connectItem = findDropdownConnectButton(moreBtn);
         if (connectItem) break;
-        if (i === 12) {
-          console.log('[LinkedIn AI Connect] Retrying click on "..." button...');
-          try { moreBtn.click(); } catch (e) {}
+        if (i === 10) {
+          const isExpanded = moreBtn.getAttribute('aria-expanded') === 'true';
+          if (!isExpanded) {
+            console.log('[LinkedIn AI Connect] Retrying click on "..." button...');
+            triggerClick(moreBtn);
+          }
         }
       }
     }
 
     if (!connectItem) {
       console.log('[LinkedIn AI Connect] Connect option is not available in "More" menu for this profile.');
+      if (moreBtn.getAttribute('aria-expanded') === 'true') {
+        triggerClick(moreBtn);
+      }
       return { modal: null, isConnectDirect: false };
     }
 
     console.log('[LinkedIn AI Connect] 🎯 Found Connect option inside dropdown! Clicking...', connectItem);
-    clickDropdownConnectItem(connectItem);
+    await sleep(200);
+    triggerClick(connectItem);
 
     // 4. Wait for invitation modal to appear
     let modal = await waitForModal(4500);
@@ -1174,7 +1108,7 @@
       }
       // Retry clicking Connect item once more
       console.log('[LinkedIn AI Connect] Modal did not appear, retrying click on Connect item...');
-      clickDropdownConnectItem(connectItem);
+      triggerClick(connectItem);
       modal = await waitForModal(3000);
       if (!modal && isProfileAlreadyPending()) {
         return { modal: null, isConnectDirect: true };
@@ -1619,55 +1553,60 @@
       const addNoteBtn = getAddNoteButton(modal);
       if (addNoteBtn) {
         console.log('[LinkedIn AI Connect] Found "Add a note" button, clicking...', addNoteBtn);
-        clickConnectItem(addNoteBtn);
-        const innerNote = addNoteBtn.querySelector('span');
-        if (innerNote) {
-          try { clickConnectItem(innerNote); } catch (e) {}
+        triggerClick(addNoteBtn);
+        await sleep(400);
+
+        // Poll up to 2.5s for textarea to render
+        for (let t = 0; t < 25; t++) {
+          textarea = document.querySelector(
+            'textarea#custom-message, textarea[name="message"], .artdeco-modal textarea, div[role="dialog"]:not(.msg-overlay-container *) textarea, textarea'
+          );
+          if (textarea) break;
+          if (t === 10) {
+            console.log('[LinkedIn AI Connect] Retrying click on "Add a note" button...');
+            triggerClick(addNoteBtn);
+          }
+          await sleep(100);
         }
-        await sleep(800);
       }
-      textarea = await waitForElement(
-        'textarea#custom-message, textarea[name="message"], .artdeco-modal textarea, div[role="dialog"]:not(.msg-overlay-container *) textarea, textarea',
-        4000,
-        document
-      );
     }
 
+    // SCENARIO 1: Textarea is revealed -> Type personalized note & Send
     if (textarea) {
       console.log('[LinkedIn AI Connect] Textarea found, typing personalized note...');
       simulateHumanInput(textarea, safeNoteText);
       highlightElement(textarea);
+      await sleep(600);
 
       if (autoSend) {
-        await sleep(800);
         let sendBtn = null;
-        for (let waitSec = 0; waitSec < 10; waitSec++) {
+        for (let waitSec = 0; waitSec < 15; waitSec++) {
           const currentModal = getActiveModal() || modal;
           sendBtn = getSendButton(currentModal) || getSendButton(document);
           if (sendBtn && !sendBtn.disabled && !sendBtn.classList.contains('artdeco-button--disabled')) {
             break;
           }
-          await sleep(300);
+          await sleep(200);
         }
 
         if (sendBtn) {
           console.log('[LinkedIn AI Connect] Clicking Send invitation button...', sendBtn);
-          clickConnectItem(sendBtn);
-          await sleep(1500);
+          triggerClick(sendBtn);
+          await sleep(1200);
 
           // VERIFY MODAL CLOSURE TO PREVENT GHOST SUCCESS
           let verifiedSent = false;
-          for (let check = 0; check < 10; check++) {
+          for (let check = 0; check < 15; check++) {
             const currentModal = getActiveModal();
             if (!currentModal || isProfileAlreadyPending()) {
               verifiedSent = true;
               break;
             }
-            if (check === 3 && sendBtn) {
+            if (check === 5 && sendBtn) {
               console.log('[LinkedIn AI Connect] Retrying send button click...');
-              clickConnectItem(sendBtn);
+              triggerClick(sendBtn);
             }
-            await sleep(300);
+            await sleep(250);
           }
 
           if (verifiedSent) {
@@ -1677,7 +1616,7 @@
               const followBtn = findFollowButton();
               if (followBtn) {
                 triggerClick(followBtn);
-                await sleep(800);
+                await sleep(600);
               }
             }
 
@@ -1693,67 +1632,69 @@
             const errText = activeM ? activeM.innerText : '';
             if (/weekly|limit|restricted/i.test(errText)) {
               chrome.storage.local.set({ autopilotActive: false });
-              const dismiss = activeM.querySelector('button[aria-label="Dismiss"], button[aria-label="Close"]');
+              const dismiss = activeM.querySelector('button[aria-label="Dismiss"], button[aria-label="Close"], button.artdeco-modal__dismiss');
               if (dismiss) triggerClick(dismiss);
               return { success: false, isConnect: false, message: 'LinkedIn weekly limit reached.' };
             }
-            if (activeM) {
-              const dismiss = activeM.querySelector('button[aria-label="Dismiss"], button[aria-label="Close"]');
-              if (dismiss) triggerClick(dismiss);
-            }
-            return {
-              success: false,
-              isConnect: false,
-              message: 'Send failed (modal did not close cleanly).'
-            };
           }
         }
+      } else {
+        return {
+          success: true,
+          isConnect: false,
+          message: 'Note successfully inserted into Connect modal!'
+        };
       }
-
-      return {
-        success: true,
-        isConnect: false,
-        message: 'Note successfully inserted into Connect modal!'
-      };
     }
 
-    // Fallback: Send without note if textarea not revealed
+    // SCENARIO 2: Fallback to "Send without a note" if textarea not revealed or limit hit
     if (autoSend) {
-      console.log('[LinkedIn AI Connect] Fallback: Sending connection request without note...');
-      const fallbackBtn = getSendWithoutNoteButton(modal);
+      console.log('[LinkedIn AI Connect] Sending connection request via "Send without a note"...');
+      const fallbackBtn = getSendWithoutNoteButton(getActiveModal() || modal);
       if (fallbackBtn) {
-        clickConnectItem(fallbackBtn);
-        await sleep(1500);
+        console.log('[LinkedIn AI Connect] Found "Send without a note" button, clicking...', fallbackBtn);
+        triggerClick(fallbackBtn);
+        await sleep(1200);
 
         let verifiedFallbackSent = false;
-        for (let check = 0; check < 10; check++) {
-          if (!getActiveModal() || isProfileAlreadyPending()) {
+        for (let check = 0; check < 15; check++) {
+          const curModal = getActiveModal();
+          if (!curModal || isProfileAlreadyPending()) {
             verifiedFallbackSent = true;
             break;
           }
-          await sleep(300);
+          if (check === 5 && fallbackBtn) {
+            console.log('[LinkedIn AI Connect] Retrying click on "Send without a note" button...');
+            triggerClick(fallbackBtn);
+          }
+          await sleep(250);
         }
 
         if (verifiedFallbackSent) {
+          console.log('[LinkedIn AI Connect] ✅ Verified: Connection request sent without note!');
           if (!isProfileAlreadyFollowing()) {
+            await sleep(600);
             const followBtn = findFollowButton();
-            if (followBtn) triggerClick(followBtn);
+            if (followBtn) {
+              triggerClick(followBtn);
+              await sleep(600);
+            }
           }
 
           return {
             success: true,
             isConnect: true,
             isFollowOnly: false,
-            message: 'Connection request sent without note (fallback).'
+            message: 'Connection request sent successfully!'
           };
         }
       }
     }
 
-    // Dismiss stuck modal
+    // Dismiss stuck modal if any
     const stuckModal = getActiveModal();
     if (stuckModal) {
-      const dismiss = stuckModal.querySelector('button[aria-label="Dismiss"], button[aria-label="Close"]');
+      const dismiss = stuckModal.querySelector('button[aria-label="Dismiss"], button[aria-label="Close"], button.artdeco-modal__dismiss');
       if (dismiss) triggerClick(dismiss);
     }
 
