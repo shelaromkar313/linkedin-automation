@@ -3,6 +3,7 @@ LinkedIn Authentication & Session Manager for Playwright.
 Supports li_at cookie injection and persistent storage_state.json.
 """
 
+import os
 from pathlib import Path
 from typing import Optional
 from playwright.sync_api import Browser, BrowserContext, sync_playwright
@@ -17,6 +18,10 @@ def setup_linkedin_session(context: BrowserContext) -> bool:
     # 1. Option A: Inject li_at cookie from environment
     if config.LINKEDIN_LI_AT and len(config.LINKEDIN_LI_AT) > 10:
         clean_cookie = config.LINKEDIN_LI_AT.strip().strip('"').strip("'")
+        jsessionid = os.getenv("LINKEDIN_JSESSIONID", "").strip().strip('"').strip("'") or "ajax:8274910283749201834"
+        if not jsessionid.startswith('"'):
+            jsessionid = f'"{jsessionid}"'
+
         cookies = [
             {
                 "name": "li_at",
@@ -26,7 +31,34 @@ def setup_linkedin_session(context: BrowserContext) -> bool:
                 "httpOnly": True,
                 "secure": True,
                 "sameSite": "None",
-            }
+            },
+            {
+                "name": "JSESSIONID",
+                "value": jsessionid,
+                "domain": ".linkedin.com",
+                "path": "/",
+                "httpOnly": False,
+                "secure": True,
+                "sameSite": "None",
+            },
+            {
+                "name": "bcookie",
+                "value": '"v=2&12345678-1234-1234-1234-123456789012"',
+                "domain": ".linkedin.com",
+                "path": "/",
+                "httpOnly": False,
+                "secure": True,
+                "sameSite": "None",
+            },
+            {
+                "name": "bscookie",
+                "value": '"v=1&12345678-1234-1234-1234-123456789012"',
+                "domain": ".linkedin.com",
+                "path": "/",
+                "httpOnly": False,
+                "secure": True,
+                "sameSite": "None",
+            },
         ]
         context.add_cookies(cookies)
         return True

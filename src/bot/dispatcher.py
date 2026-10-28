@@ -319,6 +319,7 @@ class OutreachDispatcher:
             has_auth = setup_linkedin_session(context)
 
             page = context.new_page()
+            page.on("response", lambda r: logger.info(f"[HTTP {r.status}] {r.url} -> Location: {r.headers.get('location')}") if r.status in (301, 302, 303, 307) else None)
 
             # Verify login status
             try:
