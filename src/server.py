@@ -43,13 +43,16 @@ class N8NRequestHandler(BaseHTTPRequestHandler):
 
         if path == "/run-outreach":
             # Extract optional parameters from n8n query
-            limit = int(query.get("limit", [10])[0])
-            title = query.get("title", ["CEO"])[0]
-            keyword = query.get("keyword", ["SaaS"])[0]
-            location = query.get("location", ["Pune"])[0]
+            limit_raw = query.get("limit", ["10"])[0].rstrip("/ ")
+            limit = int(limit_raw) if limit_raw.isdigit() else 10
+            title = query.get("title", ["CEO"])[0].strip("/ ")
+            keyword = query.get("keyword", ["SaaS"])[0].strip("/ ")
+            location = query.get("location", ["Pune"])[0].rstrip("/0 ").strip()
+            if not location:
+                location = "Pune"
             dry_run = query.get("dry_run", ["false"])[0].lower() in ("true", "1")
 
-            logger.info(f"Received outreach trigger from n8n: limit={limit}, title={title}, location={location}, dry_run={dry_run}")
+            logger.info(f"Received outreach trigger from n8n: limit={limit}, title={title}, location={location}, keyword={keyword}, dry_run={dry_run}")
 
             db = Database()
             ai = AIPersonalizer()
@@ -63,6 +66,7 @@ class N8NRequestHandler(BaseHTTPRequestHandler):
                 needed = limit - pending_count
                 logger.info(f"Scraping up to {needed} fresh prospects for {title} in {location}...")
                 xray_q = searcher.build_query(title, keyword, location)
+                logger.info(f"Executing X-Ray Query: {xray_q}")
                 discovered = searcher.search(xray_q, limit=needed)
                 for lead in discovered:
                     db.add_lead(
@@ -71,15 +75,19 @@ class N8NRequestHandler(BaseHTTPRequestHandler):
                         linkedin_url=lead["linkedin_url"],
                     )
                 leads_discovered = len(discovered)
+                logger.info(f"Added {leads_discovered} leads to database.")
 
             # 2. Personalize connection notes (strict <= 200 chars)
             pending_notes = db.get_leads_by_status(LeadStatus.PENDING, limit=limit)
+            logger.info(f"Generating AI connection notes for {len(pending_notes)} pending leads...")
             for p in pending_notes:
                 note = ai.generate_note(p["name"], p["headline"])
                 db.update_lead_note(p["id"], note)
 
             # 3. Dispatch automated invites
+            logger.info(f"Dispatching automated invites (limit={limit})...")
             dispatch_results = dispatcher.dispatch_batch(limit=limit, dry_run=dry_run)
+            logger.info(f"Dispatch finished: {dispatch_results}")
 
             # 4. Return results formatted for n8n & Google Sheets
             recent_sent = db.get_leads_by_status(LeadStatus.SENT, limit=limit)
