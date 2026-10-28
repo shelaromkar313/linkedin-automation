@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LinkedIn AI Connect Assistant</title>
+  <style>
+    :root {
+      --linkedin-blue: #0a66c2;
+      --linkedin-blue-hover: #004182;
+      --linkedin-light-blue: #eef3f8;
+      --bg-primary: #ffffff;
+      --bg-secondary: #f8fafc;
+      --border-color: #e2e8f0;
+      --text-primary: #0f172a;
+      --text-secondary: #475569;
+      --text-muted: #64748b;
+      --success-green: #10b981;
+      --warning-amber: #f59e0b;
+      --error-red: #ef4444;
+      --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      width: 360px;
+      font-family: var(--font-family);
+      background-color: var(--bg-primary);
+      color: var(--text-primary);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .container {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 14px;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 10px;
+    }
+
+    .header-branding {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .header-logo {
+      width: 26px;
+      height: 26px;
+      border-radius: 6px;
+    }
+
+    .header-titles h1 {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--linkedin-blue);
+      letter-spacing: -0.2px;
+    }
+
+    .header-titles p {
+      font-size: 10.5px;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    .badge-status {
+      font-size: 10.5px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 12px;
+      background-color: var(--border-color);
+      color: var(--text-secondary);
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .badge-status.active {
+      background-color: #ecfdf5;
+      color: #065f46;
+      border: 1px solid #a7f3d0;
+    }
+
+    .badge-status.warning {
+      background-color: #fffbeb;
+      color: #92400e;
+      border: 1px solid #fde68a;
+    }
+
+    /* Card styling */
+    .card {
+      background-color: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 10px 12px;
+      position: relative;
+    }
+
+    .card-title {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .btn-text-action {
+      background: none;
+      border: none;
+      color: var(--linkedin-blue);
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 0 2px;
+      text-decoration: underline;
+    }
+
+    .btn-text-action:hover {
+      color: var(--linkedin-blue-hover);
+    }
+
+    /* Profile read-out */
+    .profile-info {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .profile-name {
+      font-size: 13.5px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .profile-headline {
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      line-height: 1.35;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .profile-company {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-top: 2px;
+    }
+
+    .profile-company svg {
+      flex-shrink: 0;
+    }
+
+    /* Settings section */
+    .collapsible-header {
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      padding: 4px 0;
+      user-select: none;
+    }
+
+    .collapsible-header:hover {
+      color: var(--linkedin-blue);
+    }
+
+    .settings-body {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px dashed var(--border-color);
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .form-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .form-label a {
+      color: var(--linkedin-blue);
+      text-decoration: none;
+      font-weight: normal;
+    }
+
+    .form-label a:hover {
+      text-decoration: underline;
+    }
+
+    .input-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    input[type="text"],
+    input[type="password"],
+    select,
+    textarea {
+      width: 100%;
+      padding: 7px 9px;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 12px;
+      color: var(--text-primary);
+      background-color: var(--bg-primary);
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      outline: none;
+      border-color: var(--linkedin-blue);
+      box-shadow: 0 0 0 2px rgba(10, 102, 194, 0.15);
+    }
+
+    .btn-toggle-vis {
+      position: absolute;
+      right: 6px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text-muted);
+      padding: 2px 4px;
+      font-size: 11px;
+    }
+
+    textarea.pitch-input {
+      resize: vertical;
+      min-height: 48px;
+      max-height: 90px;
+    }
+
+    /* Output Note Area */
+    .note-output-card {
+      background-color: var(--bg-primary);
+      border: 1px solid var(--border-color);
+    }
+
+    .char-counter {
+      font-size: 10.5px;
+      font-weight: 600;
+      color: var(--success-green);
+    }
+
+    .char-counter.warning {
+      color: var(--warning-amber);
+    }
+
+    .char-counter.danger {
+      color: var(--error-red);
+    }
+
+    textarea#generatedNote {
+      width: 100%;
+      height: 84px;
+      resize: vertical;
+      font-size: 12px;
+      line-height: 1.4;
+      padding: 8px;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      margin-top: 4px;
+    }
+
+    /* Buttons */
+    .btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 8px 12px;
+      border-radius: 20px;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: background-color 0.15s ease, transform 0.05s active;
+      width: 100%;
+    }
+
+    .btn-primary {
+      background-color: var(--linkedin-blue);
+      color: #ffffff;
+    }
+
+    .btn-primary:hover {
+      background-color: var(--linkedin-blue-hover);
+    }
+
+    .btn-secondary {
+      background-color: transparent;
+      color: var(--linkedin-blue);
+      border: 1px solid var(--linkedin-blue);
+    }
+
+    .btn-secondary:hover {
+      background-color: var(--linkedin-light-blue);
+    }
+
+    .btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .btn-copy {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 11px;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .btn-copy:hover {
+      color: var(--linkedin-blue);
+    }
+
+    .actions-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    /* Status & Alerts */
+    .status-box {
+      border-radius: 6px;
+      padding: 7px 10px;
+      font-size: 11.5px;
+      display: none;
+      align-items: flex-start;
+      gap: 6px;
+    }
+
+    .status-box.show {
+      display: flex;
+    }
+
+    .status-box.info {
+      background-color: #eff6ff;
+      border: 1px solid #bfdbfe;
+      color: #1e40af;
+    }
+
+    .status-box.success {
+      background-color: #ecfdf5;
+      border: 1px solid #a7f3d0;
+      color: #065f46;
+    }
+
+    .status-box.error {
+      background-color: #fef2f2;
+      border: 1px solid #fecaca;
+      color: #991b1b;
+    }
+
+    .status-icon {
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    /* Micro-spinner */
+    .spinner {
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-top-color: #ffffff;
+      border-radius: 50%;
+      width: 14px;
+      height: 14px;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-branding">
+        <img src="icons/icon48.png" alt="Logo" class="header-logo">
+        <div class="header-titles">
+          <h1>AI Connect Assistant</h1>
+          <p>Powered by Gemini 1.5 Flash</p>
+        </div>
+      </div>
+      <div id="connectionBadge" class="badge-status">
+        Checking tab...
+      </div>
+    </header>
+
+    <!-- Autopilot Search & Connect Card -->
+    <section class="card" style="border: 1.5px solid #0a66c2; background: #f0f7ff;">
+      <div class="card-title" style="color: #0a66c2;">
+        <span>⚡ Autopilot: Pune CEOs (150+ Emp)</span>
+        <span class="badge-status active">Zero Cost</span>
+      </div>
+      <div class="form-group" style="margin-top: 4px;">
+        <label class="form-label" for="autopilotKeyword">Target Title & City</label>
+        <input type="text" id="autopilotKeyword" value="CEO" placeholder="e.g. CEO, Founder, Director">
+      </div>
+      <div style="display: flex; gap: 8px; margin-top: 6px; align-items: flex-end;">
+        <div style="flex: 1;">
+          <label class="form-label" for="autopilotLocation">Location</label>
+          <input type="text" id="autopilotLocation" value="Pune, Maharashtra" style="padding: 6px 8px;" readonly>
+        </div>
+        <div style="flex: 1;">
+          <label class="form-label" for="autopilotMinEmp">Min Employees</label>
+          <input type="number" id="autopilotMinEmp" value="150" min="1" style="padding: 6px 8px;">
+        </div>
+        <div style="flex: 1;">
+          <label class="form-label" for="autopilotLimit">Max / Day</label>
+          <input type="number" id="autopilotLimit" value="15" min="1" max="25" style="padding: 6px 8px;">
+        </div>
+      </div>
+
+      <div style="margin-top: 8px; padding-top: 6px; border-top: 1px dashed #cbd5e1;">
+        <label style="display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; color: #0a66c2; cursor: pointer;">
+          <input type="checkbox" id="chkDaily8AM" checked style="accent-color: #0a66c2; cursor: pointer;">
+          <span>⏰ Run Automatically Every Morning at 8:00 AM</span>
+        </label>
+      </div>
+
+      <div style="margin-top: 8px;">
+        <button id="btnStartAutopilot" class="btn btn-primary" style="padding: 8px 12px; font-size: 12.5px; background: #0a66c2; width: 100%;">
+          <span id="btnAutopilotSpinner" class="spinner" style="display: none;"></span>
+          <span id="btnAutopilotText">🚀 Start Autopilot for Pune CEOs</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- Campaign Tracker & Lead CRM (Free Tracker) -->
+    <section class="card" style="border: 1.5px solid #10b981; background: #f0fdf4;">
+      <div class="card-title" style="color: #065f46; display: flex; justify-content: space-between;">
+        <span>📊 Lead Tracker & Auto-Followup</span>
+        <button id="btnRefreshTracker" class="btn-text-action" style="color: #059669;">Refresh</button>
+      </div>
+
+      <!-- Stats Grid -->
+      <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; text-align: center; margin-bottom: 8px;">
+        <div style="background: #ffffff; padding: 4px; border-radius: 6px; border: 1px solid #d1fae5;">
+          <div id="statTotalSent" style="font-weight: 800; font-size: 13px; color: #0f172a;">0</div>
+          <div style="font-size: 9.5px; color: #64748b;">Sent</div>
+        </div>
+        <div style="background: #ffffff; padding: 4px; border-radius: 6px; border: 1px solid #d1fae5;">
+          <div id="statPending" style="font-weight: 800; font-size: 13px; color: #d97706;">0</div>
+          <div style="font-size: 9.5px; color: #64748b;">Pending</div>
+        </div>
+        <div style="background: #ffffff; padding: 4px; border-radius: 6px; border: 1px solid #d1fae5;">
+          <div id="statAccepted" style="font-weight: 800; font-size: 13px; color: #059669;">0</div>
+          <div style="font-size: 9.5px; color: #64748b;">Accepted</div>
+        </div>
+        <div style="background: #ffffff; padding: 4px; border-radius: 6px; border: 1px solid #d1fae5;">
+          <div id="statMessaged" style="font-weight: 800; font-size: 13px; color: #2563eb;">0</div>
+          <div style="font-size: 9.5px; color: #64748b;">Messaged</div>
+        </div>
+      </div>
+
+      <!-- Action Buttons for Boss -->
+      <div style="display: flex; gap: 6px;">
+        <button id="btnExportCSV" class="btn btn-secondary" style="flex: 1; padding: 6px 8px; font-size: 11px; border-color: #059669; color: #065f46;">
+          📥 Download CSV / Excel
+        </button>
+        <button id="btnCheckAccepted" class="btn btn-primary" style="flex: 1; padding: 6px 8px; font-size: 11px; background: #059669;">
+          🤝 Check Accepted &amp; Msg
+        </button>
+      </div>
+
+      <!-- Recent Leads List -->
+      <div id="trackerList" style="max-height: 90px; overflow-y: auto; margin-top: 6px; font-size: 10.5px; border: 1px solid #e2e8f0; border-radius: 4px; background: #ffffff;">
+        <div style="padding: 6px; color: #94a3b8; text-align: center;">No outreach logged yet. Start outreach above!</div>
+      </div>
+    </section>
+
+    <!-- Target Profile Status Card (Single Profile Mode) -->
+    <section class="card" id="profileCard">
+      <div class="card-title">
+        <span>Single Profile Mode</span>
+        <button id="btnRefreshProfile" class="btn-text-action" title="Rescan active page">Refresh</button>
+      </div>
+      <div class="profile-info">
+        <div id="targetName" class="profile-name">No Profile Detected</div>
+        <div id="targetHeadline" class="profile-headline">Navigate to a LinkedIn profile to auto-detect.</div>
+        <div id="targetCompany" class="profile-company">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
+            <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+          </svg>
+          <span id="targetCompanyText">Company: Not detected</span>
+        </div>
+      </div>
+      <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-color);">
+        <label style="display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: #0a66c2; cursor: pointer;">
+          <input type="checkbox" id="chkAutoConnectOnVisit" checked style="accent-color: #0a66c2; cursor: pointer;">
+          <span>⚡ Auto-Connect on Profile Visit (Zero Clicks)</span>
+        </label>
+      </div>
+    </section>
+
+    <!-- Settings (Collapsible) -->
+    <section class="card">
+      <div class="collapsible-header" id="toggleSettings">
+        <span>⚙️ Configuration & Pitch Context</span>
+        <span id="settingsArrow">▼</span>
+      </div>
+      <div class="settings-body" id="settingsBody">
+        <div class="form-group">
+          <label class="form-label" for="apiKey">
+            <span>Gemini API Key</span>
+            <a href="https://aistudio.google.com/app/apikey" target="_blank">Get Free Key</a>
+          </label>
+          <div class="input-wrapper">
+            <input type="password" id="apiKey" placeholder="AIzaSy..." autocomplete="off">
+            <button type="button" id="toggleKeyVisibility" class="btn-toggle-vis" title="Toggle visibility">👁</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="pitchProfile">My Pitch / Context</label>
+          <textarea id="pitchProfile" class="pitch-input" placeholder="Your company or service offer..."></textarea>
+        </div>
+
+        <div class="form-group">
+          <div class="form-label">
+            <span>Gemini AI Model</span>
+            <button type="button" id="btnDetectModels" class="btn-text-action" title="Query Google API for available models on your key">Scan Key's Models</button>
+          </div>
+          <select id="modelSelector" class="model-select">
+            <option value="auto">Auto-Detect & Fallback (Recommended)</option>
+            <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+            <option value="gemini-2.0-flash-exp">gemini-2.0-flash-exp</option>
+            <option value="gemini-1.5-flash">gemini-1.5-flash</option>
+            <option value="gemini-1.5-flash-latest">gemini-1.5-flash-latest</option>
+            <option value="gemini-1.5-flash-002">gemini-1.5-flash-002</option>
+            <option value="gemini-1.5-flash-001">gemini-1.5-flash-001</option>
+            <option value="gemini-1.5-flash-8b">gemini-1.5-flash-8b</option>
+            <option value="gemini-1.5-pro">gemini-1.5-pro</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
+    <!-- AI Output & Note Preview -->
+    <section class="card note-output-card">
+      <div class="card-title">
+        <span>Connection Invite Note</span>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span id="charCounter" class="char-counter">0 / 240 chars</span>
+          <button id="btnCopyNote" class="btn-copy" title="Copy to clipboard">📋 Copy</button>
+        </div>
+      </div>
+      <textarea id="generatedNote" placeholder="Click 'Generate AI Connection Note' below to compose a tailored invite..."></textarea>
+    </section>
+
+    <!-- Status Message Box -->
+    <div id="statusBox" class="status-box">
+      <span class="status-icon" id="statusIcon">ℹ️</span>
+      <span id="statusMessage">Status message</span>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="actions-grid">
+      <button id="btnAutoConnectCurrent" class="btn btn-primary" style="background: #059669; font-weight: 700; padding: 10px 14px; font-size: 13px;">
+        <span id="btnAutoConnectSpinner" class="spinner" style="display: none;"></span>
+        <span id="btnAutoConnectText">⚡ Connect & Send Note (1-Click)</span>
+      </button>
+      <button id="btnGenerate" class="btn btn-secondary">
+        <span id="btnGenSpinner" class="spinner" style="display: none;"></span>
+        <span id="btnGenText">✨ Generate AI Connection Note</span>
+      </button>
+      <button id="btnInsert" class="btn btn-secondary">
+        <span>🚀 Insert into Modal (Preview)</span>
+      </button>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

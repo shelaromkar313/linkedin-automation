@@ -1,0 +1,112 @@
+{
+  "name": "LinkedIn AI Outreach Automation Pipeline (n8n & Gemini Flash)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 10 * * 1-5"
+            }
+          ]
+        }
+      },
+      "name": "Schedule Trigger (Mon-Fri 10AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.scrapingdog.com/linkedin/search",
+        "options": {
+          "qs": {
+            "query": "CEO hardware manufacturing",
+            "page": "1"
+          }
+        }
+      },
+      "name": "Search Target CEOs (Proxy / API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "key",
+              "value": "={{$node[\"Config\"].json[\"GEMINI_API_KEY\"]}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "contents",
+              "value": "=[{\"parts\":[{\"text\":\"Draft a 1-sentence personalized LinkedIn connection request note for {{$json.name}} ({{$json.headline}}). Strictly under 220 characters without quotes, bullets or pitching.\"}]}]"
+            }
+          ]
+        }
+      },
+      "name": "Google Gemini 2.0 Flash (AI Crafting)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:3000/webhook/linkedin-connect",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"profileUrl\": \"{{$node[\"Search Target CEOs\"].json[\"profileUrl\"]}}\",\n  \"name\": \"{{$node[\"Search Target CEOs\"].json[\"name\"]}}\",\n  \"note\": \"{{$json.candidates[0].content.parts[0].text}}\"\n}"
+      },
+      "name": "Dispatch to Chrome Extension / Browser Bot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [930, 300]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger (Mon-Fri 10AM)": {
+      "main": [
+        [
+          {
+            "node": "Search Target CEOs (Proxy / API)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Target CEOs (Proxy / API)": {
+      "main": [
+        [
+          {
+            "node": "Google Gemini 2.0 Flash (AI Crafting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini 2.0 Flash (AI Crafting)": {
+      "main": [
+        [
+          {
+            "node": "Dispatch to Chrome Extension / Browser Bot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
