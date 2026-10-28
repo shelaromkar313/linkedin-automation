@@ -331,7 +331,10 @@ async function handleStartAutopilot() {
         autopilotActive: true,
         autopilotConfig: config,
         autopilotQueue: [],
-        autopilotIndex: 0
+        autopilotIndex: 0,
+        autopilotSentCount: 0,
+        autopilotFollowedCount: 0,
+        autopilotSkippedCount: 0
       }, resolve);
     });
 
@@ -342,7 +345,10 @@ async function handleStartAutopilot() {
       await new Promise((resolve) => {
         chrome.storage.local.set({
           autopilotQueue: [tab.url.split('?')[0].split('#')[0]],
-          autopilotIndex: 0
+          autopilotIndex: 0,
+          autopilotSentCount: 0,
+          autopilotFollowedCount: 0,
+          autopilotSkippedCount: 0
         }, resolve);
       });
       sendTabMessage(tab.id, { action: 'start_autopilot', config }).catch(() => {});

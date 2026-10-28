@@ -31,7 +31,15 @@
     if (isAutopilotRunning && !force) return;
 
     try {
-      chrome.storage.local.get(['autopilotActive', 'autopilotConfig', 'autopilotQueue', 'autopilotIndex'], async (res) => {
+      chrome.storage.local.get([
+        'autopilotActive',
+        'autopilotConfig',
+        'autopilotQueue',
+        'autopilotIndex',
+        'autopilotSentCount',
+        'autopilotFollowedCount',
+        'autopilotSkippedCount'
+      ], async (res) => {
         if (!isExtensionValid() || !res) return;
         if (!res.autopilotActive || !res.autopilotConfig) {
           return;
@@ -47,14 +55,14 @@
       if (currentUrl.includes('/search/results/people')) {
         if (isUserLoggedOut()) {
           showAutopilotWidget();
-          updateAutopilotWidget('⚠️ You are logged out! Please log into LinkedIn to run Autopilot.', 0, config.limit || 5);
+          updateAutopilotWidget('⚠️ You are logged out! Please log into LinkedIn to run Autopilot.', 0, config.limit || 5, 0, 0);
           chrome.storage.local.set({ autopilotActive: false });
           isAutopilotRunning = false;
           return;
         }
 
         showAutopilotWidget();
-        updateAutopilotWidget(`Autopilot: Scanning CEOs for "${config.keyword || 'CEO'}"...`, 0, config.limit || 5);
+        updateAutopilotWidget(`Autopilot: Scanning CEOs for "${config.keyword || 'CEO'}"...`, 0, config.limit || 5, 0, 0);
 
         await sleep(1500);
 
@@ -91,16 +99,19 @@
         const uniqueUrls = Array.from(new Set(profileUrls)).slice(0, parseInt(config.limit, 10) || 5);
 
         if (uniqueUrls.length > 0) {
-          updateAutopilotWidget(`Found ${uniqueUrls.length} decision-makers! Opening Candidate #1...`, 0, uniqueUrls.length);
+          updateAutopilotWidget(`Found ${uniqueUrls.length} decision-makers! Opening Candidate #1...`, 0, uniqueUrls.length, 0, 0);
           chrome.storage.local.set({
             autopilotQueue: uniqueUrls,
-            autopilotIndex: 0
+            autopilotIndex: 0,
+            autopilotSentCount: 0,
+            autopilotFollowedCount: 0,
+            autopilotSkippedCount: 0
           });
 
           await sleep(1500);
           window.location.href = uniqueUrls[0];
         } else {
-          updateAutopilotWidget('Waiting for search cards to appear...', 0, config.limit || 5);
+          updateAutopilotWidget('Waiting for search cards to appear...', 0, config.limit || 5, 0, 0);
           await sleep(3000);
           window.location.reload();
         }
@@ -112,24 +123,40 @@
       else if (currentUrl.includes('/in/')) {
         let queue = res.autopilotQueue || [];
         let index = res.autopilotIndex || 0;
+        let sentCount = res.autopilotSentCount || 0;
+        let followedCount = res.autopilotFollowedCount || 0;
+        let skippedCount = res.autopilotSkippedCount || 0;
 
         // If user started autopilot on a profile directly, add current profile to queue
         if (queue.length === 0) {
           queue = [currentUrl.split('?')[0].split('#')[0]];
           index = 0;
-          chrome.storage.local.set({ autopilotQueue: queue, autopilotIndex: 0 });
+          sentCount = 0;
+          followedCount = 0;
+          skippedCount = 0;
+          chrome.storage.local.set({
+            autopilotQueue: queue,
+            autopilotIndex: 0,
+            autopilotSentCount: 0,
+            autopilotFollowedCount: 0,
+            autopilotSkippedCount: 0
+          });
         }
 
         if (queue.length > 0 && index < queue.length) {
           showAutopilotWidget();
-          updateAutopilotWidget(`Candidate ${index + 1} of ${queue.length}: Loading profile...`, index, queue.length);
+          updateAutopilotWidget(`Candidate ${index + 1} of ${queue.length}: Waiting for profile to load...`, index, queue.length, sentCount, followedCount);
 
           try { window.scrollTo({ top: 0, behavior: 'instant' }); } catch (e) {}
-          await sleep(2500);
-          try { window.scrollTo({ top: 0, behavior: 'instant' }); } catch (e) {}
+
+          // BUG 1 FIX: Wait for LinkedIn's dynamic GraphQL/SPA DOM to finish rendering
+          const isLoaded = await waitForProfileToLoad(15000);
+          if (!isLoaded) {
+            console.warn('[LinkedIn AI Connect] ⚠️ Profile DOM load timeout, attempting fallback scrape...');
+          }
 
           if (isUserLoggedOut()) {
-            updateAutopilotWidget('⚠️ LinkedIn session logged out! Please log into LinkedIn and restart Autopilot.', index, queue.length);
+            updateAutopilotWidget('⚠️ LinkedIn session logged out! Please log into LinkedIn and restart Autopilot.', index, queue.length, sentCount, followedCount);
             chrome.storage.local.set({ autopilotActive: false });
             isAutopilotRunning = false;
             return;
@@ -137,6 +164,7 @@
 
           // 1. Scrape decision-maker details
           const profile = extractProfileData();
+          console.log('[LinkedIn AI Connect] Extracted profile details:', profile);
 
           // 1b. Check Company Employee Count (Target: 150+ Employees)
           const minEmp = parseInt(config.minEmployees, 10) || 0;
@@ -144,7 +172,9 @@
             const detectedEmp = estimateCompanyEmployees();
             if (detectedEmp !== null && detectedEmp < minEmp) {
               console.log(`[LinkedIn AI Connect] Candidate company headcount (~${detectedEmp}) is below target (${minEmp}+). Skipping.`);
-              updateAutopilotWidget(`Skipping ${profile.name}: Company headcount (~${detectedEmp}) is under ${minEmp}+.`, index + 1, queue.length);
+              skippedCount++;
+              chrome.storage.local.set({ autopilotSkippedCount: skippedCount });
+              updateAutopilotWidget(`Skipping ${profile.name}: Headcount (~${detectedEmp}) is under ${minEmp}+.`, index + 1, queue.length, sentCount, followedCount);
               await sleep(1500);
 
               const nextIndex = index + 1;
@@ -154,29 +184,38 @@
                 return;
               } else {
                 chrome.storage.local.set({ autopilotActive: false, autopilotQueue: [], autopilotIndex: 0 });
-                updateAutopilotWidget(`🎉 Campaign Complete! Reached queue end.`, queue.length, queue.length);
+                updateAutopilotWidget(`🎉 Campaign Complete! Sent ${sentCount} invites (${followedCount} followed) across ${queue.length} targets.`, queue.length, queue.length, sentCount, followedCount);
                 isAutopilotRunning = false;
                 return;
               }
             }
           }
 
-          updateAutopilotWidget(`Crafting personalized AI note for ${profile.name}...`, index, queue.length, profile.name);
+          updateAutopilotWidget(`Crafting personalized AI note for ${profile.name}...`, index, queue.length, sentCount, followedCount, profile.name);
 
           // 2. Generate customized note
           const note = await generateAutopilotNote(profile.name, profile.headline, config);
-          updateAutopilotWidget(`Automating outreach to ${profile.name}...`, index, queue.length, profile.name, note);
+          updateAutopilotWidget(`Automating outreach to ${profile.name}...`, index, queue.length, sentCount, followedCount, profile.name, note);
 
-          // 3. Connect, Add Note & Send (or Follow + Message if connect unavailable)
+          // 3. Connect, Add Note & Send (or Follow if connect unavailable)
           const result = await executeInsertNote(note, true);
 
-          if (result && result.success) {
-            const status = result.isFollowOnly ? 'Followed' : 'Pending';
-            const recordedNote = result.isFollowOnly ? '' : note;
-            logOutreachLead(profile, status, recordedNote);
-            updateAutopilotWidget(`✅ ${result.message || 'Done with ' + profile.name}! Cooldown (4s)...`, index + 1, queue.length, profile.name, recordedNote);
+          if (result && result.success && result.isConnect) {
+            sentCount++;
+            chrome.storage.local.set({ autopilotSentCount: sentCount });
+            logOutreachLead(profile, 'Pending', note);
+            updateAutopilotWidget(`✅ Invite sent to ${profile.name}! Total Sent: ${sentCount}. Cooldown (4s)...`, index + 1, queue.length, sentCount, followedCount, profile.name, note);
+          } else if (result && result.success && result.isFollowOnly) {
+            followedCount++;
+            chrome.storage.local.set({ autopilotFollowedCount: followedCount });
+            logOutreachLead(profile, 'Followed', '');
+            updateAutopilotWidget(`ℹ️ Followed ${profile.name} (Connect unavailable). Total Sent: ${sentCount}. Cooldown (4s)...`, index + 1, queue.length, sentCount, followedCount, profile.name);
+          } else if (result && result.isAlreadyPending) {
+            updateAutopilotWidget(`ℹ️ Already pending connection with ${profile.name}. Total Sent: ${sentCount}. Cooldown (4s)...`, index + 1, queue.length, sentCount, followedCount, profile.name);
           } else {
-            updateAutopilotWidget(`Processed ${profile.name}: ${result?.message || 'Handled'}.`, index + 1, queue.length);
+            skippedCount++;
+            chrome.storage.local.set({ autopilotSkippedCount: skippedCount });
+            updateAutopilotWidget(`⚠️ ${profile.name}: ${result?.message || 'Skipped'}. Total Sent: ${sentCount}.`, index + 1, queue.length, sentCount, followedCount);
           }
 
           await sleep(4000);
@@ -193,13 +232,13 @@
           const nextIdx = index + 1;
           if (nextIdx < queue.length) {
             chrome.storage.local.set({ autopilotIndex: nextIdx });
-            updateAutopilotWidget(`Opening Candidate ${nextIdx + 1} of ${queue.length}...`, nextIdx, queue.length);
+            updateAutopilotWidget(`Opening Candidate ${nextIdx + 1} of ${queue.length}...`, nextIdx, queue.length, sentCount, followedCount);
             await sleep(1500);
             window.location.href = queue[nextIdx];
           } else {
             // Finished all targets in queue!
             chrome.storage.local.set({ autopilotActive: false, autopilotQueue: [], autopilotIndex: 0 });
-            updateAutopilotWidget(`🎉 Campaign Complete! Successfully reached all ${queue.length} targets.`, queue.length, queue.length);
+            updateAutopilotWidget(`🎉 Campaign Complete! Sent ${sentCount} invites (${followedCount} followed) across ${queue.length} targets.`, queue.length, queue.length, sentCount, followedCount);
           }
         }
       }
@@ -569,6 +608,43 @@
     return null;
   }
 
+  async function waitForProfileToLoad(timeoutMs = 15000) {
+    const startTime = Date.now();
+    console.log('[LinkedIn AI Connect] Waiting for profile SPA DOM to fully mount...');
+
+    while (Date.now() - startTime < timeoutMs) {
+      if (isUserLoggedOut()) return false;
+
+      // 1. Check for real candidate H1
+      const h1 = document.querySelector(
+        '.scaffold-layout__main h1, .pv-top-card h1, h1.inline.t-24, h1.text-heading-xlarge, main section:first-of-type h1, main h1'
+      );
+      const name = h1 ? cleanText(h1.innerText) : '';
+      const isH1Skeleton = h1 ? !!h1.closest('.artdeco-skeleton, .pv-top-card--skeleton, [data-view-name*="skeleton"]') : false;
+
+      // 2. Check for action container & buttons in hero card
+      const topSection = getMainProfileCard() || document.querySelector('.scaffold-layout__main section:first-of-type, main section:first-of-type');
+      let hasActionButtons = false;
+
+      if (topSection) {
+        const heroButtons = Array.from(topSection.querySelectorAll('button, div[role="button"], a')).filter(isAllowedHeroButton);
+        hasActionButtons = heroButtons.length > 0;
+      }
+
+      // 3. Verify real profile content loaded
+      if (!isH1Skeleton && name && name.length >= 2 && name !== 'LinkedIn Member' && hasActionButtons) {
+        console.log(`[LinkedIn AI Connect] ✅ Real profile DOM mounted for "${name}" with active hero buttons!`);
+        await sleep(600); // Settling time for React event handlers
+        return true;
+      }
+
+      await sleep(250);
+    }
+
+    console.warn('[LinkedIn AI Connect] ⚠️ Warning: Timeout waiting for full profile DOM. Retrying with best-effort.');
+    return false;
+  }
+
   function isAllowedHeroButton(el) {
     if (!el) return false;
 
@@ -577,7 +653,7 @@
       'aside, .scaffold-layout__aside, .scaffold-layout__sidebar, [data-view-name*="sidebar"], ' +
       '#experience, #about, #activity, #education, #skills, #recommendations, ' +
       '[data-view-name*="people-you-may-know"], .feed-follows-module, .pv-manage-network-card, ' +
-      '.pvs-list__outer-container, [data-view-name*="right-rail"]'
+      '.pvs-list__outer-container, [data-view-name*="right-rail"], [data-view-name*="ad"]'
     )) {
       return false;
     }
@@ -602,30 +678,32 @@
       }
     }
 
-    // 3. Must be strictly inside candidate's top actions container or top card header
+    // 3. Must be strictly inside candidate's top hero card or top actions container
+    const h1 = document.querySelector('.scaffold-layout__main h1, main h1, h1.inline.t-24, h1.text-heading-xlarge');
+    const candidateSection = h1 ? h1.closest('section, div.pv-top-card, div.ph5') : null;
     const heroBar = el.closest(
       '.pvs-profile-actions, .pv-top-card-v2-ctas, .pv-top-card__actions, ' +
-      '.pv-top-card, .scaffold-layout__main > section:first-of-type'
+      '.pv-top-card, .scaffold-layout__main section:first-of-type, main section:first-of-type'
     );
 
-    return !!heroBar;
+    return !!(heroBar || (candidateSection && candidateSection.contains(el)));
   }
 
   function getMainProfileCard() {
     const h1 = document.querySelector(
-      '.scaffold-layout__main h1, main section:first-of-type h1, h1.inline.t-24, h1.text-heading-xlarge'
+      '.scaffold-layout__main h1, main section:first-of-type h1, main h1, h1.inline.t-24, h1.text-heading-xlarge'
     );
     if (h1) {
-      const section = h1.closest('section');
+      const section = h1.closest('section, div.pv-top-card, div.ph5');
       if (section && !isSidebarElement(section)) {
         return section;
       }
     }
-    const topCard = document.querySelector('.pv-top-card, .scaffold-layout__main > section:first-of-type');
+    const topCard = document.querySelector('.pv-top-card, .scaffold-layout__main section:first-of-type, main section:first-of-type');
     if (topCard && !isSidebarElement(topCard)) {
       return topCard;
     }
-    return document.querySelector('.scaffold-layout__main > section:first-of-type') || null;
+    return document.querySelector('.scaffold-layout__main > section:first-of-type, main section:first-of-type') || null;
   }
 
   function getProfileActionsContainer() {
@@ -634,7 +712,10 @@
       '.pv-top-card .pvs-profile-actions, ' +
       '.pv-top-card-v2-ctas, ' +
       '.pv-top-card__actions, ' +
-      '.scaffold-layout__main > section:first-of-type div.ph5.pb5'
+      '.scaffold-layout__main section:first-of-type div.ph5.pb5, ' +
+      'main section:first-of-type div.ph5.pb5, ' +
+      '.scaffold-layout__main section:first-of-type div.ph5, ' +
+      'main section:first-of-type div.ph5'
     );
     if (heroActions && !isSidebarElement(heroActions)) {
       return heroActions;
@@ -781,28 +862,35 @@
   }
 
   function findMoreActionsButton() {
-    const actionsBar = getProfileActionsContainer();
-    if (!actionsBar) return null;
+    const mainCard = getMainProfileCard() || document.querySelector('.scaffold-layout__main section:first-of-type, main section:first-of-type');
+    const actionsBar = getProfileActionsContainer() || mainCard;
+    if (!actionsBar && !mainCard) return null;
 
-    const buttons = Array.from(actionsBar.querySelectorAll('button, div[role="button"]')).filter(isAllowedHeroButton);
+    const searchRoots = [actionsBar];
+    if (mainCard && mainCard !== actionsBar) searchRoots.push(mainCard);
 
-    // Priority 1: Check aria-label containing "More action" or "More"
-    for (const btn of buttons) {
-      const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
-      if (aria.includes('more action') || aria === 'more') return btn;
-    }
+    for (const root of searchRoots) {
+      const buttons = Array.from(root.querySelectorAll('button, div[role="button"]')).filter(isAllowedHeroButton);
 
-    // Priority 2: Look for button with artdeco-dropdown__trigger, circle button, or SVG ellipsis/overflow icon
-    for (const btn of buttons) {
-      const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
-      if (
-        btn.classList.contains('artdeco-dropdown__trigger') ||
-        btn.classList.contains('artdeco-button--circle') ||
-        btn.querySelector('svg[data-test-icon*="overflow"], svg[data-test-icon*="ellipsis"], svg[data-test-icon*="dots"], use[href*="overflow"], use[href*="ellipsis"]') ||
-        text === 'more' ||
-        text === '...'
-      ) {
-        return btn;
+      // Priority 1: Check aria-label containing "More action" or "More"
+      for (const btn of buttons) {
+        const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+        if (aria.includes('more action') || aria.includes('more actions') || aria === 'more') return btn;
+      }
+
+      // Priority 2: Look for button with artdeco-dropdown__trigger, circle button, or SVG ellipsis/overflow icon
+      for (const btn of buttons) {
+        const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+        if (
+          btn.classList.contains('artdeco-dropdown__trigger') ||
+          btn.classList.contains('artdeco-button--circle') ||
+          btn.querySelector('svg[data-test-icon*="overflow"], svg[data-test-icon*="ellipsis"], svg[data-test-icon*="dots"], use[href*="overflow"], use[href*="ellipsis"]') ||
+          text === 'more' ||
+          text === '...' ||
+          text === '…'
+        ) {
+          return btn;
+        }
       }
     }
 
@@ -838,15 +926,17 @@
       '.artdeco-dropdown__content--is-open, ' +
       '.artdeco-dropdown--is-open .artdeco-dropdown__content, ' +
       'div[role="menu"], ' +
+      'ul[role="menu"], ' +
       '.pvs-profile-actions .artdeco-dropdown__content, ' +
-      '.pv-top-card-v2-ctas .artdeco-dropdown__content'
+      '.pv-top-card-v2-ctas .artdeco-dropdown__content, ' +
+      'div.artdeco-dropdown__content'
     )).filter((m) => {
       // STRICT FILTER: NEVER look in sidebar, messaging, or global nav!
       if (isSidebarElement(m) || m.closest('.msg-overlay-container, #messaging, .global-nav')) {
         return false;
       }
       const style = window.getComputedStyle(m);
-      return style.display !== 'none' && style.visibility !== 'hidden';
+      return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
     });
 
     for (const menu of openMenus) {
@@ -862,7 +952,7 @@
         const aria = (el.getAttribute('aria-label') || '').toLowerCase();
 
         // Exact match for "Connect" or "+ Connect"
-        if (/^\+?\s*connect$/i.test(text) || aria === 'connect' || /invite.*to connect/i.test(aria)) {
+        if (/^\+?\s*connect$/i.test(text) || aria === 'connect' || /invite.*to connect/i.test(aria) || /connect with/i.test(text) || /connect with/i.test(aria)) {
           if (!/following|connections|pending|remove|message/i.test(text)) {
             const clickable = el.closest('.artdeco-dropdown__item, [role="menuitem"], [role="button"], li, button') || el;
             console.log('[LinkedIn AI Connect] 🎯 Found Connect dropdown item inside menu:', clickable);
@@ -975,44 +1065,51 @@
     const moreBtn = findMoreActionsButton();
     if (!moreBtn) {
       console.log('[LinkedIn AI Connect] More actions (...) button not found on hero card.');
-      return null;
+      return { modal: null, isConnectDirect: false };
     }
 
-    // 2. Click "..." button to reveal dropdown
+    // 2. Click "..." button using robust clickConnectItem (pointerdown/mousedown/pointerup/mouseup/click/keydown)
     console.log('[LinkedIn AI Connect] Clicking "..." (More actions) button to reveal dropdown...', moreBtn);
-    triggerClick(moreBtn);
+    clickConnectItem(moreBtn);
 
-    // 3. Poll up to 2.5s for the Connect menu item inside the opened dropdown
+    // 3. Poll up to 3s for the Connect menu item inside the opened dropdown
     let connectItem = null;
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 25; i++) {
       await sleep(120);
       connectItem = findConnectMenuItem();
       if (connectItem) break;
-      if (i === 8) {
-        try { moreBtn.click(); } catch (e) {}
+      if (i === 6 || i === 14) {
+        try { clickConnectItem(moreBtn); } catch (e) {}
       }
     }
 
     if (!connectItem) {
       console.log('[LinkedIn AI Connect] Connect option is not available in "More" menu for this profile.');
-      // Close dropdown if still open
       try { moreBtn.click(); } catch (e) {}
-      return null;
+      return { modal: null, isConnectDirect: false };
     }
 
     console.log('[LinkedIn AI Connect] 🎯 Found Connect option inside dropdown! Clicking...', connectItem);
     clickConnectItem(connectItem);
 
-    // 4. Wait for invitation modal to appear
-    let modal = await waitForModal(4500);
-    if (!modal) {
-      console.log('[LinkedIn AI Connect] Modal did not appear on first click, trying inner element...');
-      const inner = connectItem.querySelector('span, svg, div') || connectItem;
-      clickConnectItem(inner);
-      modal = await waitForModal(3000);
+    const inner = connectItem.querySelector('span, svg, div') || connectItem;
+    if (inner && inner !== connectItem) {
+      try { clickConnectItem(inner); } catch (e) {}
     }
 
-    return modal;
+    // 4. Wait for invitation modal to appear
+    let modal = await waitForModal(4500);
+
+    // If modal didn't appear, check if invite was sent directly (1-click connect)
+    if (!modal) {
+      await sleep(1200);
+      if (isProfileAlreadyPending()) {
+        console.log('[LinkedIn AI Connect] ✅ Connection sent directly via More dropdown without modal!');
+        return { modal: null, isConnectDirect: true };
+      }
+    }
+
+    return { modal, isConnectDirect: false };
   }
 
   function findButtonByText(container, keywords) {
@@ -1304,8 +1401,9 @@
 
     return {
       success: true,
+      isConnect: false,
       isFollowOnly: true,
-      message: followed ? 'Followed account successfully (Connect unavailable).' : 'Profile processed.'
+      message: followed ? 'Followed account successfully (Connect unavailable).' : 'Profile processed (Connect/Follow unavailable).'
     };
   }
 
@@ -1319,6 +1417,7 @@
     if (isUserLoggedOut()) {
       return {
         success: false,
+        isConnect: false,
         message: 'You appear to be logged out of LinkedIn. Please log in.'
       };
     }
@@ -1329,11 +1428,14 @@
     if (isProfileAlreadyPending()) {
       return {
         success: true,
+        isConnect: false,
+        isAlreadyPending: true,
         message: 'Already pending connection'
       };
     }
 
     let modal = getActiveModal();
+    let isConnectDirect = false;
 
     // STEP 1: Check for direct Connect button on candidate's hero action bar
     if (!modal) {
@@ -1341,15 +1443,42 @@
       const directConnectBtn = findDirectConnectButton();
       if (directConnectBtn) {
         console.log('[LinkedIn AI Connect] Found direct Connect button on hero card! Clicking...', directConnectBtn);
-        triggerClick(directConnectBtn);
+        clickConnectItem(directConnectBtn);
         modal = await waitForModal(4500);
+
+        if (!modal) {
+          await sleep(1000);
+          if (isProfileAlreadyPending()) {
+            console.log('[LinkedIn AI Connect] ✅ Sent connection directly via direct Connect button!');
+            isConnectDirect = true;
+          }
+        }
       }
     }
 
-    // STEP 2: If no direct Connect, check 3-dots button on candidate's hero action bar
-    if (!modal) {
+    // STEP 2: If no direct Connect (e.g. Follow mode profiles like Anje Kruger, Srini Gopalan), check 3-dots button
+    if (!modal && !isConnectDirect) {
       console.log('[LinkedIn AI Connect] Checking 3-dots button (...) on hero action bar...');
-      modal = await openMoreMenuAndClickConnect();
+      const moreRes = await openMoreMenuAndClickConnect();
+      modal = moreRes.modal;
+      isConnectDirect = moreRes.isConnectDirect;
+    }
+
+    // Direct connect was sent without modal
+    if (isConnectDirect) {
+      if (!isProfileAlreadyFollowing()) {
+        const followBtn = findFollowButton();
+        if (followBtn) {
+          triggerClick(followBtn);
+          await sleep(800);
+        }
+      }
+      return {
+        success: true,
+        isConnect: true,
+        isFollowOnly: false,
+        message: 'Connection request sent directly!'
+      };
     }
 
     // SAFETY CHECK: Verify that the opened modal actually belongs to the current candidate
@@ -1360,7 +1489,7 @@
       modal = null;
     }
 
-    // STEP 3: If modal STILL did not open, Connect is not available on this candidate
+    // STEP 3: If modal STILL did not open and no direct connect, Connect is truly not available on this profile
     if (!modal) {
       console.log('[LinkedIn AI Connect] Neither direct Connect nor 3-dots Connect is available on this CEO hero card.');
       console.log('[LinkedIn AI Connect] Executing Follow fallback strictly on candidate hero card...');
@@ -1376,6 +1505,7 @@
       if (dismiss) triggerClick(dismiss);
       return {
         success: false,
+        isConnect: false,
         message: 'Weekly LinkedIn invitation limit reached.'
       };
     }
@@ -1401,6 +1531,9 @@
       modal = getActiveModal() || modal;
     }
 
+    // Ensure note text doesn't exceed LinkedIn 300-char limit
+    const safeNoteText = (noteText || '').trim().slice(0, 280);
+
     // Find and click "Add a note" button
     let textarea = document.querySelector(
       'textarea#custom-message, textarea[name="message"], .artdeco-modal textarea, div[role="dialog"]:not(.msg-overlay-container *) textarea, textarea'
@@ -1409,10 +1542,10 @@
       const addNoteBtn = getAddNoteButton(modal);
       if (addNoteBtn) {
         console.log('[LinkedIn AI Connect] Found "Add a note" button, clicking...', addNoteBtn);
-        triggerClick(addNoteBtn);
+        clickConnectItem(addNoteBtn);
         const innerNote = addNoteBtn.querySelector('span');
         if (innerNote) {
-          try { triggerClick(innerNote); } catch (e) {}
+          try { clickConnectItem(innerNote); } catch (e) {}
         }
         await sleep(800);
       }
@@ -1425,63 +1558,84 @@
 
     if (textarea) {
       console.log('[LinkedIn AI Connect] Textarea found, typing personalized note...');
-      simulateHumanInput(textarea, noteText);
+      simulateHumanInput(textarea, safeNoteText);
       highlightElement(textarea);
 
       if (autoSend) {
         await sleep(800);
         let sendBtn = null;
-        for (let waitSec = 0; waitSec < 8; waitSec++) {
+        for (let waitSec = 0; waitSec < 10; waitSec++) {
           const currentModal = getActiveModal() || modal;
           sendBtn = getSendButton(currentModal) || getSendButton(document);
           if (sendBtn && !sendBtn.disabled && !sendBtn.classList.contains('artdeco-button--disabled')) {
             break;
           }
-          if (waitSec >= 4 && sendBtn) {
-            console.log('[LinkedIn AI Connect] Force-enabling Send button in modal...');
-            sendBtn.removeAttribute('disabled');
-            sendBtn.classList.remove('artdeco-button--disabled');
-            break;
-          }
-          await sleep(400);
+          await sleep(300);
         }
 
         if (sendBtn) {
           console.log('[LinkedIn AI Connect] Clicking Send invitation button...', sendBtn);
           clickConnectItem(sendBtn);
-          triggerClick(sendBtn);
-          const innerSend = sendBtn.querySelector('span');
-          if (innerSend) {
-            try { triggerClick(innerSend); } catch (e) {}
-          }
           await sleep(1500);
 
-          try {
-            const profile = extractProfileData();
-            logOutreachLead(profile, 'Pending', noteText);
-          } catch (e) {}
-
-          // User instruction: "and then write note and go to follow button this is simple process"
-          if (!isProfileAlreadyFollowing()) {
-            console.log('[LinkedIn AI Connect] Now checking for Follow button to follow account...');
-            await sleep(800);
-            const followBtn = findFollowButton();
-            if (followBtn) {
-              console.log('[LinkedIn AI Connect] Clicking Follow button on hero card...', followBtn);
-              triggerClick(followBtn);
-              await sleep(1000);
+          // VERIFY MODAL CLOSURE TO PREVENT GHOST SUCCESS
+          let verifiedSent = false;
+          for (let check = 0; check < 10; check++) {
+            const currentModal = getActiveModal();
+            if (!currentModal || isProfileAlreadyPending()) {
+              verifiedSent = true;
+              break;
             }
+            if (check === 3 && sendBtn) {
+              console.log('[LinkedIn AI Connect] Retrying send button click...');
+              clickConnectItem(sendBtn);
+            }
+            await sleep(300);
           }
 
-          return {
-            success: true,
-            message: 'Personalized invite sent & account followed!'
-          };
+          if (verifiedSent) {
+            console.log('[LinkedIn AI Connect] ✅ Modal closed! Connection invite verified successfully sent!');
+            if (!isProfileAlreadyFollowing()) {
+              await sleep(600);
+              const followBtn = findFollowButton();
+              if (followBtn) {
+                triggerClick(followBtn);
+                await sleep(800);
+              }
+            }
+
+            return {
+              success: true,
+              isConnect: true,
+              isFollowOnly: false,
+              message: 'Personalized invite sent & account followed!'
+            };
+          } else {
+            console.warn('[LinkedIn AI Connect] ⚠️ Modal remained open after Send click.');
+            const activeM = getActiveModal();
+            const errText = activeM ? activeM.innerText : '';
+            if (/weekly|limit|restricted/i.test(errText)) {
+              chrome.storage.local.set({ autopilotActive: false });
+              const dismiss = activeM.querySelector('button[aria-label="Dismiss"], button[aria-label="Close"]');
+              if (dismiss) triggerClick(dismiss);
+              return { success: false, isConnect: false, message: 'LinkedIn weekly limit reached.' };
+            }
+            if (activeM) {
+              const dismiss = activeM.querySelector('button[aria-label="Dismiss"], button[aria-label="Close"]');
+              if (dismiss) triggerClick(dismiss);
+            }
+            return {
+              success: false,
+              isConnect: false,
+              message: 'Send failed (modal did not close cleanly).'
+            };
+          }
         }
       }
 
       return {
         success: true,
+        isConnect: false,
         message: 'Note successfully inserted into Connect modal!'
       };
     }
@@ -1491,29 +1645,45 @@
       console.log('[LinkedIn AI Connect] Fallback: Sending connection request without note...');
       const fallbackBtn = getSendWithoutNoteButton(modal);
       if (fallbackBtn) {
-        triggerClick(fallbackBtn);
-        await sleep(1200);
+        clickConnectItem(fallbackBtn);
+        await sleep(1500);
 
-        try {
-          const profile = extractProfileData();
-          logOutreachLead(profile, 'Pending', '');
-        } catch (e) {}
-
-        if (!isProfileAlreadyFollowing()) {
-          const followBtn = findFollowButton();
-          if (followBtn) triggerClick(followBtn);
+        let verifiedFallbackSent = false;
+        for (let check = 0; check < 10; check++) {
+          if (!getActiveModal() || isProfileAlreadyPending()) {
+            verifiedFallbackSent = true;
+            break;
+          }
+          await sleep(300);
         }
 
-        return {
-          success: true,
-          message: 'Connection request sent without note (fallback).'
-        };
+        if (verifiedFallbackSent) {
+          if (!isProfileAlreadyFollowing()) {
+            const followBtn = findFollowButton();
+            if (followBtn) triggerClick(followBtn);
+          }
+
+          return {
+            success: true,
+            isConnect: true,
+            isFollowOnly: false,
+            message: 'Connection request sent without note (fallback).'
+          };
+        }
       }
     }
 
+    // Dismiss stuck modal
+    const stuckModal = getActiveModal();
+    if (stuckModal) {
+      const dismiss = stuckModal.querySelector('button[aria-label="Dismiss"], button[aria-label="Close"]');
+      if (dismiss) triggerClick(dismiss);
+    }
+
     return {
-      success: true,
-      message: 'Connection attempt completed.'
+      success: false,
+      isConnect: false,
+      message: 'Connection attempt could not be completed.'
     };
   }
 
@@ -1693,16 +1863,18 @@ Directives: Strictly under 220 characters total. Highlight synergy. Do not pitch
     widget.style.display = 'block';
   }
 
-  function updateAutopilotWidget(statusText, sent, total, candidateName = '', note = '') {
+  function updateAutopilotWidget(statusText, candidateIndex, total, sentCount = 0, followedCount = 0, candidateName = '', note = '') {
     const statusEl = document.getElementById('autopilot-status-text');
     const counterEl = document.getElementById('autopilot-counter');
     const barEl = document.getElementById('autopilot-bar');
     const noteBox = document.getElementById('autopilot-note-box');
 
     if (statusEl) statusEl.textContent = statusText;
-    if (counterEl) counterEl.textContent = `${sent} / ${total}`;
+    if (counterEl) {
+      counterEl.textContent = `Sent: ${sentCount} | Candidate: ${candidateIndex}/${total}`;
+    }
     if (barEl) {
-      const pct = Math.min(100, Math.round((sent / Math.max(1, total)) * 100));
+      const pct = Math.min(100, Math.round((candidateIndex / Math.max(1, total)) * 100));
       barEl.style.width = `${pct}%`;
     }
     if (noteBox && note) {
@@ -1712,6 +1884,21 @@ Directives: Strictly under 220 characters total. Highlight synergy. Do not pitch
   }
 
   // ============================================================
+  // SPA URL CHANGE WATCHER (CLIENT-SIDE ROUTING RESUME)
+  // ============================================================
+  let lastObservedUrl = window.location.href;
+  setInterval(() => {
+    if (!isExtensionValid()) return;
+    const currentUrl = window.location.href;
+    if (currentUrl !== lastObservedUrl) {
+      lastObservedUrl = currentUrl;
+      if (!isAutopilotRunning) {
+        checkAndRunAutopilot();
+      }
+    }
+  }, 1200);
+
+  // ============================================================
   // ON-PAGE INVITATION MODAL WATCHER
   // ============================================================
   const modalWatcherTimer = setInterval(() => {
@@ -1719,6 +1906,9 @@ Directives: Strictly under 220 characters total. Highlight synergy. Do not pitch
       clearInterval(modalWatcherTimer);
       return;
     }
+
+    // Never interfere if Autopilot orchestrator is running
+    if (isAutopilotRunning) return;
 
     const modal = getActiveModal();
     if (!modal) return;

@@ -65,6 +65,9 @@ async function triggerDailyAutopilot() {
       autopilotConfig: config,
       autopilotQueue: [],
       autopilotIndex: 0,
+      autopilotSentCount: 0,
+      autopilotFollowedCount: 0,
+      autopilotSkippedCount: 0,
       lastDailyRun: new Date().toISOString()
     }, () => {
       // Create new tab with Pune CEO search URL
