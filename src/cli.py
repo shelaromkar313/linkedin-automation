@@ -138,6 +138,14 @@ def command_login(args) -> None:
     interactive_login()
 
 
+def command_serve(args) -> None:
+    """Start lightweight HTTP API server for n8n webhook triggers."""
+    from src.server import run_server
+    port = getattr(args, "port", 8000) or 8000
+    host = getattr(args, "host", "0.0.0.0") or "0.0.0.0"
+    run_server(port=port, host=host)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="linkedin-outreach",
@@ -184,6 +192,12 @@ def build_parser() -> argparse.ArgumentParser:
     # Login
     login_parser = subparsers.add_parser("login", help="Open headed browser to log in to LinkedIn")
     login_parser.set_defaults(func=command_login)
+
+    # Serve API for n8n
+    serve_parser = subparsers.add_parser("serve", help="Start HTTP API server for n8n automated triggers")
+    serve_parser.add_argument("--port", type=int, default=8000, help="Port to listen on (default: 8000)")
+    serve_parser.add_argument("--host", default="0.0.0.0", help="Host interface (default: 0.0.0.0)")
+    serve_parser.set_defaults(func=command_serve)
 
     return parser
 
