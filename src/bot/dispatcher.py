@@ -297,18 +297,32 @@ class OutreachDispatcher:
             context_kwargs = {
                 "user_agent": config.USER_AGENT,
                 "viewport": {"width": 1280, "height": 800},
+                "locale": "en-US",
+                "timezone_id": "Asia/Kolkata",
+                "extra_http_headers": {
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "sec-ch-ua": '"Chromium";v="131", "Not_A Brand";v="24"',
+                    "sec-ch-ua-mobile": "?0",
+                    "sec-ch-ua-platform": '"Linux"',
+                    "upgrade-insecure-requests": "1",
+                }
             }
             if state_file.exists():
                 context_kwargs["storage_state"] = str(state_file)
 
             context = browser.new_context(**context_kwargs)
+            context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+                Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+            """)
             has_auth = setup_linkedin_session(context)
 
             page = context.new_page()
 
             # Verify login status
             try:
-                page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded", timeout=30000)
+                page.goto("https://www.linkedin.com/feed/", wait_until="commit", timeout=25000)
                 page.wait_for_timeout(2500)
             except Exception as e:
                 logger.warning(f"[Dispatcher] Feed navigation notice: {e}. Checking authentication state...")
@@ -347,8 +361,11 @@ class OutreachDispatcher:
 
                 try:
                     logger.info(f"[Dispatcher] Navigating to candidate profile: {url}")
-                    page.goto(url, wait_until="domcontentloaded", timeout=35000)
-                    page.wait_for_timeout(3000)
+                    try:
+                        page.goto(url, wait_until="commit", timeout=25000)
+                    except Exception:
+                        page.goto(url, wait_until="domcontentloaded", timeout=25000)
+                    page.wait_for_timeout(3500)
                     logger.info(f"[Dispatcher] Profile loaded: {page.title()}")
 
                     # Check security checkpoints
