@@ -159,3 +159,7 @@ class XRaySearcher:
 
         print(f"[XRaySearcher] Successfully discovered {len(results)} valid LinkedIn prospects.")
         return results
+
+
+# Backwards compatibility alias
+GoogleXRayScraper = XRaySearcher

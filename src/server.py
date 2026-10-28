@@ -10,9 +10,9 @@ from typing import Dict, Any
 
 from src.config import config
 from src.database.db import Database, LeadStatus
-from src.scraper.xray import GoogleXRayScraper
+from src.scraper.xray import XRaySearcher
 from src.ai.generator import AIPersonalizer
-from src.bot.dispatcher import LinkedInDispatcher
+from src.bot.dispatcher import OutreachDispatcher
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("n8n_server")
@@ -53,8 +53,8 @@ class N8NRequestHandler(BaseHTTPRequestHandler):
 
             db = Database()
             ai = AIPersonalizer()
-            scraper = GoogleXRayScraper(db=db)
-            dispatcher = LinkedInDispatcher(db=db, ai=ai)
+            searcher = XRaySearcher()
+            dispatcher = OutreachDispatcher(db=db, ai=ai)
 
             # 1. Scrape fresh leads if needed
             pending_count = len(db.get_leads_by_status(LeadStatus.GENERATED, limit=limit))
@@ -62,7 +62,14 @@ class N8NRequestHandler(BaseHTTPRequestHandler):
             if pending_count < limit:
                 needed = limit - pending_count
                 logger.info(f"Scraping up to {needed} fresh prospects for {title} in {location}...")
-                discovered = scraper.search(target_title=title, niche_keyword=keyword, location=location, limit=needed)
+                xray_q = searcher.build_query(title, keyword, location)
+                discovered = searcher.search(xray_q, limit=needed)
+                for lead in discovered:
+                    db.add_lead(
+                        name=lead["name"],
+                        headline=lead["headline"],
+                        linkedin_url=lead["linkedin_url"],
+                    )
                 leads_discovered = len(discovered)
 
             # 2. Personalize connection notes (strict <= 200 chars)

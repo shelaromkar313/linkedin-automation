@@ -358,3 +358,7 @@ class OutreachDispatcher:
             "failed": failed_count,
             "sent_today": self.db.count_sent_in_last_24h(),
         }
+
+
+# Backwards compatibility alias
+LinkedInDispatcher = OutreachDispatcher
