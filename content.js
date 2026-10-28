@@ -535,10 +535,13 @@
 
   function isSidebarElement(el) {
     if (!el) return false;
+    const insideMain = el.closest('main, .scaffold-layout__main, .scaffold-layout__content');
+    if (insideMain) {
+      return !!el.closest('aside, .scaffold-layout__aside, .scaffold-layout__sidebar, [data-view-name*="sidebar"], [data-view-name*="right-rail"]');
+    }
     return !!el.closest(
       'aside, .scaffold-layout__aside, .scaffold-layout__sidebar, [data-view-name*="sidebar"], ' +
-      '#profile-content ~ aside, .feed-follows-module, .pv-manage-network-card, section.artdeco-card:not(.scaffold-layout__main *), ' +
-      '[data-view-name*="profile-card"]:not(.scaffold-layout__main *), div[data-view-name*="right-rail"]'
+      '#profile-content ~ aside, .feed-follows-module, .pv-manage-network-card, div[data-view-name*="right-rail"], [data-view-name*="ad"]'
     );
   }
 
@@ -920,57 +923,141 @@
     return null;
   }
 
-  function findConnectMenuItem() {
-    // Dropdown container MUST be strictly an open artdeco-dropdown content or role="menu"
-    const openMenus = Array.from(document.querySelectorAll(
-      '.artdeco-dropdown__content--is-open, ' +
-      '.artdeco-dropdown--is-open .artdeco-dropdown__content, ' +
-      'div[role="menu"], ' +
-      'ul[role="menu"], ' +
-      '.pvs-profile-actions .artdeco-dropdown__content, ' +
-      '.pv-top-card-v2-ctas .artdeco-dropdown__content, ' +
-      'div.artdeco-dropdown__content'
-    )).filter((m) => {
-      // STRICT FILTER: NEVER look in sidebar, messaging, or global nav!
-      if (isSidebarElement(m) || m.closest('.msg-overlay-container, #messaging, .global-nav')) {
-        return false;
-      }
-      const style = window.getComputedStyle(m);
-      return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
-    });
+  function findDropdownConnectButton(moreBtn) {
+    // 1. Search directly inside the dropdown container belonging to moreBtn
+    const containers = [];
+    if (moreBtn) {
+      const parentDropdown = moreBtn.closest('.artdeco-dropdown, div[data-view-name*="dropdown"]');
+      if (parentDropdown) containers.push(parentDropdown);
 
-    for (const menu of openMenus) {
-      // Search ONLY inside this active dropdown menu
-      const candidates = Array.from(menu.querySelectorAll(
-        '.artdeco-dropdown__item, [role="menuitem"], [role="button"], li, div, span, button'
+      const ariaControls = moreBtn.getAttribute('aria-controls');
+      if (ariaControls) {
+        const controlled = document.getElementById(ariaControls);
+        if (controlled) containers.push(controlled);
+      }
+    }
+
+    // 2. Also search all open dropdown menus and role="menu" across the page
+    const globalMenus = Array.from(document.querySelectorAll(
+      '.artdeco-dropdown--is-open, .artdeco-dropdown__content, div[role="menu"], ul[role="menu"], .artdeco-dropdown'
+    )).filter((m) => !isSidebarElement(m) && !m.closest('.msg-overlay-container, #messaging, .global-nav, aside'));
+
+    containers.push(...globalMenus);
+
+    for (const container of containers) {
+      // Find all clickable candidates inside this dropdown
+      const items = Array.from(container.querySelectorAll(
+        '.artdeco-dropdown__item, [role="menuitem"], [role="button"], li, button, div, span, a'
       ));
 
-      for (const el of candidates) {
-        if (isSidebarElement(el) || el.closest('.msg-overlay-container, #messaging')) continue;
+      for (const item of items) {
+        if (isSidebarElement(item) || item.closest('.msg-overlay-container, #messaging, .global-nav, aside')) continue;
 
-        const text = (el.innerText || el.textContent || '').trim();
-        const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+        const text = (item.innerText || item.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        const aria = (item.getAttribute('aria-label') || '').toLowerCase();
 
-        // Exact match for "Connect" or "+ Connect"
-        if (/^\+?\s*connect$/i.test(text) || aria === 'connect' || /invite.*to connect/i.test(aria) || /connect with/i.test(text) || /connect with/i.test(aria)) {
-          if (!/following|connections|pending|remove|message/i.test(text)) {
-            const clickable = el.closest('.artdeco-dropdown__item, [role="menuitem"], [role="button"], li, button') || el;
-            console.log('[LinkedIn AI Connect] 🎯 Found Connect dropdown item inside menu:', clickable);
+        // Reject forbidden options (remove, following, unfollow, report, block, etc.)
+        if (
+          text.includes('remove') ||
+          text.includes('connections') ||
+          text.includes('following') ||
+          text.includes('unfollow') ||
+          text.includes('report') ||
+          text.includes('block') ||
+          text.includes('share') ||
+          aria.includes('remove') ||
+          aria.includes('following')
+        ) {
+          continue;
+        }
+
+        // Match "Connect" / "+ Connect" / "Invite ... to connect"
+        const isConnectText = text === 'connect' || text === '+ connect' || text.startsWith('connect') || (text.includes('connect') && !text.includes('message'));
+        const isConnectAria = aria === 'connect' || aria.includes('to connect') || aria.includes('connect with') || (aria.includes('invite') && aria.includes('connect'));
+        const hasConnectIcon = !!item.querySelector('li-icon[type="connect"], svg[data-test-icon*="connect"], use[href*="connect"]');
+
+        if (isConnectText || isConnectAria || hasConnectIcon) {
+          const rect = item.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) {
+            const clickable = item.closest('.artdeco-dropdown__item, [role="menuitem"], [role="button"], li, button') || item;
+            console.log('[LinkedIn AI Connect] 🎯 Found visible Connect item inside dropdown:', clickable);
             return clickable;
           }
         }
       }
+    }
 
-      // Check for connect icon inside dropdown menu
-      const connectIcon = menu.querySelector('li-icon[type="connect"], svg[data-test-icon*="connect"], use[href*="connect"]');
-      if (connectIcon) {
-        const item = connectIcon.closest('.artdeco-dropdown__item, [role="menuitem"], [role="button"], li, button') || connectIcon;
-        console.log('[LinkedIn AI Connect] 🎯 Found Connect item via connect icon inside menu:', item);
-        return item;
+    // 3. Fallback: Search globally for any visible Connect menuitem
+    const allMenuItems = Array.from(document.querySelectorAll(
+      '[role="menuitem"], .artdeco-dropdown__item, div[role="button"]'
+    ));
+
+    for (const item of allMenuItems) {
+      if (isSidebarElement(item) || item.closest('.msg-overlay-container, #messaging, .global-nav, aside')) continue;
+      const text = (item.innerText || item.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      const aria = (item.getAttribute('aria-label') || '').toLowerCase();
+
+      if (text.includes('remove') || text.includes('connections') || text.includes('following') || text.includes('report')) continue;
+
+      if (text === 'connect' || text === '+ connect' || aria.includes('to connect') || (text.includes('connect') && !text.includes('message'))) {
+        const rect = item.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          console.log('[LinkedIn AI Connect] 🎯 Found visible Connect menuitem (fallback):', item);
+          return item;
+        }
       }
     }
 
     return null;
+  }
+
+  function triggerDropdownClick(btn) {
+    if (!btn) return;
+    try {
+      btn.scrollIntoView({ behavior: 'instant', block: 'center' });
+      btn.focus();
+    } catch (e) {}
+
+    const rect = btn.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const opts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0 };
+
+    try { btn.dispatchEvent(new PointerEvent('pointerdown', Object.assign({ pointerId: 1, pointerType: 'mouse', isPrimary: true }, opts))); } catch (e) {}
+    try { btn.dispatchEvent(new MouseEvent('mousedown', opts)); } catch (e) {}
+    try { btn.dispatchEvent(new PointerEvent('pointerup', Object.assign({ pointerId: 1, pointerType: 'mouse', isPrimary: true }, opts))); } catch (e) {}
+    try { btn.dispatchEvent(new MouseEvent('mouseup', opts)); } catch (e) {}
+    btn.click();
+  }
+
+  function clickDropdownConnectItem(item) {
+    if (!item) return;
+    console.log('[LinkedIn AI Connect] 🚀 Dispatching click to Connect option in dropdown:', item);
+    try {
+      item.scrollIntoView({ behavior: 'instant', block: 'nearest' });
+      item.focus();
+    } catch (e) {}
+
+    const rect = item.getBoundingClientRect();
+    const cx = rect.left + Math.max(2, rect.width / 2);
+    const cy = rect.top + Math.max(2, rect.height / 2);
+    const opts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0 };
+
+    try { item.dispatchEvent(new PointerEvent('pointerdown', Object.assign({ pointerId: 1, pointerType: 'mouse', isPrimary: true }, opts))); } catch (e) {}
+    try { item.dispatchEvent(new MouseEvent('mousedown', opts)); } catch (e) {}
+    try { item.dispatchEvent(new PointerEvent('pointerup', Object.assign({ pointerId: 1, pointerType: 'mouse', isPrimary: true }, opts))); } catch (e) {}
+    try { item.dispatchEvent(new MouseEvent('mouseup', opts)); } catch (e) {}
+    try { item.click(); } catch (e) {}
+
+    // Also trigger inner span or div if item is wrapper
+    const inner = Array.from(item.querySelectorAll('span, div')).find((s) => (s.innerText || '').toLowerCase().includes('connect'));
+    if (inner && inner !== item) {
+      try {
+        inner.dispatchEvent(new MouseEvent('mousedown', opts));
+        inner.dispatchEvent(new MouseEvent('mouseup', opts));
+        inner.click();
+      } catch (e) {}
+    }
   }
 
   function clickConnectItem(el) {
@@ -987,7 +1074,6 @@
       el.focus();
     } catch (e) {}
 
-    // Calculate real screen coordinates for LinkedIn/Ember event verification
     const rect = el.getBoundingClientRect();
     const cx = rect.left + Math.max(2, rect.width / 2);
     const cy = rect.top + Math.max(2, rect.height / 2);
@@ -1018,46 +1104,24 @@
       buttons: 0
     };
 
-    // 1. Dispatch pointerdown and mousedown
     try {
       el.dispatchEvent(new PointerEvent('pointerdown', Object.assign({ pointerId: 1, pointerType: 'mouse', isPrimary: true }, mouseOptsDown)));
     } catch (e) {}
     try {
       el.dispatchEvent(new MouseEvent('mousedown', mouseOptsDown));
     } catch (e) {}
-
-    // 2. Dispatch pointerup and mouseup
     try {
       el.dispatchEvent(new PointerEvent('pointerup', Object.assign({ pointerId: 1, pointerType: 'mouse', isPrimary: true }, mouseOptsUp)));
     } catch (e) {}
     try {
       el.dispatchEvent(new MouseEvent('mouseup', mouseOptsUp));
     } catch (e) {}
-
-    // 3. Dispatch click
     try {
       el.dispatchEvent(new MouseEvent('click', mouseOptsUp));
     } catch (e) {}
     try {
       el.click();
     } catch (e) {}
-
-    // 4. Accessibility Keyboard Enter/Space (LinkedIn Ember role="button" handles keydown)
-    try {
-      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-      el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-    } catch (e) {}
-
-    // 5. Also trigger inner span or div child directly
-    const inner = el.querySelector('span, div') || el;
-    if (inner && inner !== el) {
-      try {
-        inner.dispatchEvent(new MouseEvent('mousedown', mouseOptsDown));
-        inner.dispatchEvent(new MouseEvent('mouseup', mouseOptsUp));
-        inner.dispatchEvent(new MouseEvent('click', mouseOptsUp));
-        inner.click();
-      } catch (e) {}
-    }
   }
 
   async function openMoreMenuAndClickConnect() {
@@ -1068,43 +1132,51 @@
       return { modal: null, isConnectDirect: false };
     }
 
-    // 2. Click "..." button using robust clickConnectItem (pointerdown/mousedown/pointerup/mouseup/click/keydown)
-    console.log('[LinkedIn AI Connect] Clicking "..." (More actions) button to reveal dropdown...', moreBtn);
-    clickConnectItem(moreBtn);
+    console.log('[LinkedIn AI Connect] Found "..." (More) button on candidate hero card:', moreBtn);
 
-    // 3. Poll up to 3s for the Connect menu item inside the opened dropdown
-    let connectItem = null;
-    for (let i = 0; i < 25; i++) {
-      await sleep(120);
-      connectItem = findConnectMenuItem();
-      if (connectItem) break;
-      if (i === 6 || i === 14) {
-        try { clickConnectItem(moreBtn); } catch (e) {}
+    // 2. Check if Connect option is already visible (e.g. dropdown already open)
+    let connectItem = findDropdownConnectButton(moreBtn);
+
+    // 3. If not visible, toggle the 3-dots button open cleanly
+    if (!connectItem) {
+      console.log('[LinkedIn AI Connect] Clicking "..." (More) button to reveal dropdown...');
+      triggerDropdownClick(moreBtn);
+
+      // Poll up to 3s for the Connect menu item to mount
+      for (let i = 0; i < 30; i++) {
+        await sleep(100);
+        connectItem = findDropdownConnectButton(moreBtn);
+        if (connectItem) break;
+        if (i === 12) {
+          console.log('[LinkedIn AI Connect] Retrying click on "..." button...');
+          try { moreBtn.click(); } catch (e) {}
+        }
       }
     }
 
     if (!connectItem) {
       console.log('[LinkedIn AI Connect] Connect option is not available in "More" menu for this profile.');
-      try { moreBtn.click(); } catch (e) {}
       return { modal: null, isConnectDirect: false };
     }
 
     console.log('[LinkedIn AI Connect] 🎯 Found Connect option inside dropdown! Clicking...', connectItem);
-    clickConnectItem(connectItem);
-
-    const inner = connectItem.querySelector('span, svg, div') || connectItem;
-    if (inner && inner !== connectItem) {
-      try { clickConnectItem(inner); } catch (e) {}
-    }
+    clickDropdownConnectItem(connectItem);
 
     // 4. Wait for invitation modal to appear
     let modal = await waitForModal(4500);
 
-    // If modal didn't appear, check if invite was sent directly (1-click connect)
+    // Check if invite was sent directly (1-click connect without modal)
     if (!modal) {
-      await sleep(1200);
+      await sleep(1000);
       if (isProfileAlreadyPending()) {
         console.log('[LinkedIn AI Connect] ✅ Connection sent directly via More dropdown without modal!');
+        return { modal: null, isConnectDirect: true };
+      }
+      // Retry clicking Connect item once more
+      console.log('[LinkedIn AI Connect] Modal did not appear, retrying click on Connect item...');
+      clickDropdownConnectItem(connectItem);
+      modal = await waitForModal(3000);
+      if (!modal && isProfileAlreadyPending()) {
         return { modal: null, isConnectDirect: true };
       }
     }
@@ -1369,13 +1441,18 @@
   function isModalForCandidate(modal, candidateName) {
     if (!modal || !candidateName || candidateName === 'Colleague') return true;
     const firstName = candidateName.trim().split(' ')[0].toLowerCase();
-    if (firstName.length < 3) return true;
-
     const modalText = (modal.innerText || '').toLowerCase();
-    if (modalText.includes(firstName)) {
+
+    if (firstName.length >= 3 && modalText.includes(firstName)) {
       return true;
     }
-    if (modalText.includes('add a note') && modalText.includes('send without a note')) {
+    if (
+      modalText.includes('add a note') ||
+      modalText.includes('send without a note') ||
+      modalText.includes('invitation') ||
+      modalText.includes('connect with') ||
+      modalText.includes('how do you know')
+    ) {
       return true;
     }
     return false;
