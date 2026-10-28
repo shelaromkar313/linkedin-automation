@@ -9,7 +9,7 @@ from urllib.parse import urlparse, parse_qs
 from typing import Dict, Any
 
 from src.config import config
-from src.database.db import DatabaseManager, LeadStatus
+from src.database.db import Database, LeadStatus
 from src.scraper.xray import GoogleXRayScraper
 from src.ai.generator import AIPersonalizer
 from src.bot.dispatcher import LinkedInDispatcher
@@ -36,7 +36,7 @@ class N8NRequestHandler(BaseHTTPRequestHandler):
             self._send_json_response(200, {
                 "status": "HEALTHY",
                 "message": "LinkedIn Automation Engine is active and ready for n8n.",
-                "daily_sent_count": DatabaseManager().count_sent_in_last_24h(),
+                "daily_sent_count": Database().count_sent_in_last_24h(),
                 "daily_limit": config.MAX_DAILY_INVITES,
             })
             return
@@ -51,7 +51,7 @@ class N8NRequestHandler(BaseHTTPRequestHandler):
 
             logger.info(f"Received outreach trigger from n8n: limit={limit}, title={title}, location={location}, dry_run={dry_run}")
 
-            db = DatabaseManager()
+            db = Database()
             ai = AIPersonalizer()
             scraper = GoogleXRayScraper(db=db)
             dispatcher = LinkedInDispatcher(db=db, ai=ai)

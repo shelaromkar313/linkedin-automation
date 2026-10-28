@@ -253,3 +253,7 @@ class Database:
                     duplicates += 1
 
         return {"inserted": inserted, "duplicates": duplicates}
+
+
+# Alias for backwards compatibility
+DatabaseManager = Database
