@@ -6,6 +6,7 @@ Includes anti-ban rate limiting, human typing delays, and safety checkpoints.
 import os
 import random
 import time
+import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
 from playwright.sync_api import sync_playwright, Page, BrowserContext
@@ -13,6 +14,9 @@ from ..config import config
 from ..database.db import Database, LeadStatus
 from ..ai.generator import AIPersonalizer
 from .auth import setup_linkedin_session, is_logged_in
+
+logger = logging.getLogger("dispatcher")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 
 class OutreachDispatcher:
@@ -51,61 +55,95 @@ class OutreachDispatcher:
 
     def _is_already_pending_or_connected(self, page: Page) -> bool:
         """Check if candidate already has a pending connection or is already a 1st degree contact."""
-        hero = page.locator(".pv-top-card, .scaffold-layout__main section:first-of-type, main section:first-of-type").first
-        if not hero or hero.count() == 0:
+        main_area = page.locator("main").first
+        if not main_area or main_area.count() == 0:
             return False
 
-        buttons = hero.locator("button, a").all()
+        buttons = main_area.locator("section:first-of-type button, .pv-top-card button, .pvs-profile-actions button").all()
         for b in buttons:
             txt = (b.inner_text() or "").strip().lower()
             aria = (b.get_attribute("aria-label") or "").strip().lower()
-            if txt in ("pending", "withdraw", "following") or "pending" in aria or "withdraw" in aria:
+            if txt in ("pending", "withdraw") or "pending" in aria or "withdraw" in aria:
                 return True
         return False
 
     def _find_and_click_connect(self, page: Page) -> bool:
         """
-        Locate and click the Connect button on the hero card (direct or via 3-dots 'More' dropdown).
+        Locate and click the Connect button on the main profile card.
+        Strictly searches inside <main> to avoid sidebar 'People you may know'.
         """
-        hero = page.locator(".scaffold-layout__main section:first-of-type, main section:first-of-type").first
-        if not hero or hero.count() == 0:
-            hero = page.locator("main").first
+        # Wait up to 8s for profile elements to mount
+        try:
+            page.wait_for_selector("main, .scaffold-layout__main, .pv-top-card", timeout=8000)
+            page.wait_for_timeout(1500)
+        except Exception:
+            pass
 
-        # 1. Check for Direct "Connect" button in hero card
-        direct_btn = hero.locator(
-            "button:has-text('Connect'), button[aria-label*='Invite'][aria-label*='to connect']"
-        ).first
-        if direct_btn.count() > 0 and direct_btn.is_visible():
-            txt = (direct_btn.inner_text() or "").strip().lower()
-            if "pending" not in txt and "message" not in txt:
-                print("[Dispatcher] Found direct 'Connect' button on profile hero card. Clicking...")
-                direct_btn.click()
+        # Target the main profile container, excluding sidebars
+        main_scope = page.locator("main, .scaffold-layout__main").first
+        if not main_scope or main_scope.count() == 0:
+            main_scope = page
+
+        # Log visible main buttons for transparency
+        visible_buttons = main_scope.locator("section:first-of-type button, .pvs-profile-actions button, .pv-top-card-v2-ctas button").all()
+        btn_labels = [(b.inner_text() or "").strip() for b in visible_buttons if b.is_visible()]
+        logger.info(f"[Dispatcher] Profile action buttons detected: {btn_labels}")
+
+        # 1. Check for Direct "Connect" button in main profile header
+        direct_selectors = [
+            "main section:first-of-type button:has-text('Connect')",
+            "main .pvs-profile-actions button:has-text('Connect')",
+            "main .pv-top-card-v2-ctas button:has-text('Connect')",
+            "main button[aria-label*='Invite'][aria-label*='to connect']",
+            "main button[aria-label*='to connect']",
+            "button:has-text('Connect')",
+        ]
+        for sel in direct_selectors:
+            direct_btn = page.locator(sel).first
+            if direct_btn.count() > 0 and direct_btn.is_visible():
+                txt = (direct_btn.inner_text() or "").strip().lower()
+                # Make sure it's not a sidebar or message button
+                if "pending" not in txt and "message" not in txt and "sidebar" not in sel:
+                    logger.info(f"[Dispatcher] 🎯 Found direct Connect button ({sel}). Clicking...")
+                    direct_btn.click()
+                    page.wait_for_timeout(1200)
+                    return True
+
+        # 2. Check "More actions" (...) dropdown on main profile card
+        more_selectors = [
+            "main section:first-of-type button[aria-label*='More action']",
+            "main section:first-of-type button[aria-label*='More']",
+            "main .pvs-profile-actions button:has-text('More')",
+            "main .pv-top-card-v2-ctas button:has-text('More')",
+            "main button.artdeco-dropdown__trigger:has-text('More')",
+            "button[aria-label*='More actions']",
+        ]
+        for sel in more_selectors:
+            more_btn = page.locator(sel).first
+            if more_btn.count() > 0 and more_btn.is_visible():
+                logger.info(f"[Dispatcher] Opening 'More actions' dropdown ({sel})...")
+                more_btn.click()
                 page.wait_for_timeout(1000)
-                return True
 
-        # 2. Check "More actions" (...) dropdown on hero card
-        more_btn = hero.locator(
-            "button[aria-label*='More action'], button[aria-label*='More'], button.artdeco-dropdown__trigger:has-text('More')"
-        ).first
+                # Look for Connect in dropdown menu
+                dropdown_connect = page.locator(
+                    ".artdeco-dropdown__content [role='menuitem']:has-text('Connect'), "
+                    ".artdeco-dropdown__content div[role='button']:has-text('Connect'), "
+                    ".artdeco-dropdown__item:has-text('Connect'), "
+                    "div.artdeco-dropdown__content span:has-text('Connect')"
+                ).first
 
-        if more_btn.count() > 0 and more_btn.is_visible():
-            print("[Dispatcher] Checking 'More actions' (...) dropdown for Connect option...")
-            more_btn.click()
-            page.wait_for_timeout(800)
+                if dropdown_connect.count() > 0 and dropdown_connect.is_visible():
+                    logger.info("[Dispatcher] 🎯 Found Connect inside 'More' dropdown. Clicking...")
+                    dropdown_connect.click()
+                    page.wait_for_timeout(1200)
+                    return True
+                else:
+                    logger.info("[Dispatcher] Connect not found in dropdown. Closing dropdown.")
+                    page.keyboard.press("Escape")
+                    page.wait_for_timeout(400)
 
-            # Find Connect item in dropdown
-            dropdown_connect = page.locator(
-                ".artdeco-dropdown__content [role='menuitem']:has-text('Connect'), "
-                ".artdeco-dropdown__content div[role='button']:has-text('Connect'), "
-                ".artdeco-dropdown__item:has-text('Connect')"
-            ).first
-
-            if dropdown_connect.count() > 0 and dropdown_connect.is_visible():
-                print("[Dispatcher] 🎯 Found Connect inside 'More' dropdown. Clicking...")
-                dropdown_connect.click()
-                page.wait_for_timeout(1000)
-                return True
-
+        logger.warning("[Dispatcher] ⚠️ No Connect button found directly or in More dropdown.")
         return False
 
     def _handle_invitation_modal(self, page: Page, note_text: str) -> bool:
@@ -273,22 +311,23 @@ class OutreachDispatcher:
             page.wait_for_timeout(2000)
 
             if not is_logged_in(page):
+                logger.error(f"[Dispatcher] ❌ Not logged in to LinkedIn! Current URL: {page.url} | Page Title: {page.title()}")
                 if dry_run:
-                    print("[Dispatcher] (DRY-RUN) LinkedIn login not present. Simulating dispatch locally:")
+                    logger.info("[Dispatcher] (DRY-RUN) LinkedIn login not present. Simulating dispatch locally:")
                     for i, lead in enumerate(leads, 1):
                         name = lead["name"]
                         url = lead["linkedin_url"]
                         note = lead["connection_note"] or self.ai.generate_note(name, lead["headline"])
-                        print(f"  [{i}/{len(leads)}] (DRY-RUN) Would dispatch note to {name}: \"{note}\"")
+                        logger.info(f"  [{i}/{len(leads)}] (DRY-RUN) Would dispatch note to {name}: \"{note}\"")
                         dispatched_count += 1
                     browser.close()
                     return {"status": "DRY_RUN_COMPLETED", "dispatched": dispatched_count, "failed": 0, "sent_today": sent_today}
 
-                print("[Dispatcher] ❌ Error: Not logged in to LinkedIn. Please set LINKEDIN_LI_AT in .env or run 'python main.py login'.")
+                logger.error("[Dispatcher] ❌ Authentication failed. Please check LINKEDIN_LI_AT in .env.")
                 browser.close()
                 return {"status": "AUTH_FAILED", "message": "Not authenticated to LinkedIn."}
 
-            print("[Dispatcher] ✅ LinkedIn session verified successfully.")
+            logger.info("[Dispatcher] ✅ LinkedIn session verified successfully.")
 
             for i, lead in enumerate(leads, 1):
                 lead_id = lead["id"]
@@ -296,25 +335,27 @@ class OutreachDispatcher:
                 url = lead["linkedin_url"]
                 note = lead["connection_note"] or self.ai.generate_note(name, lead["headline"])
 
-                print(f"\n[Dispatcher] [{i}/{len(leads)}] Processing: {name} ({url})")
+                logger.info(f"\n[Dispatcher] [{i}/{len(leads)}] Processing: {name} ({url})")
 
                 if dry_run:
-                    print(f"[Dispatcher] (DRY-RUN) Would send note: \"{note}\"")
+                    logger.info(f"[Dispatcher] (DRY-RUN) Would send note ({len(note)} chars): \"{note}\"")
                     dispatched_count += 1
                     continue
 
                 try:
+                    logger.info(f"[Dispatcher] Navigating to candidate profile: {url}")
                     page.goto(url, wait_until="domcontentloaded", timeout=35000)
-                    page.wait_for_timeout(2000)
+                    page.wait_for_timeout(3000)
+                    logger.info(f"[Dispatcher] Profile loaded: {page.title()}")
 
                     # Check security checkpoints
                     if self._check_security_checkpoint(page):
-                        print("[Dispatcher] 🛑 SECURITY CHECKPOINT / CAPTCHA DETECTED! Pausing all outreach immediately.")
+                        logger.error("[Dispatcher] 🛑 SECURITY CHECKPOINT / CAPTCHA DETECTED! Pausing all outreach immediately.")
                         break
 
                     # Check if already pending or connected
                     if self._is_already_pending_or_connected(page):
-                        print(f"[Dispatcher] Lead {name} is already pending connection or connected. Marking SENT.")
+                        logger.info(f"[Dispatcher] Lead {name} is already pending connection or connected. Marking SENT.")
                         self.db.update_lead_status(lead_id, LeadStatus.SENT)
                         dispatched_count += 1
                         continue
@@ -326,7 +367,7 @@ class OutreachDispatcher:
                     # Click Connect
                     clicked = self._find_and_click_connect(page)
                     if not clicked:
-                        print(f"[Dispatcher] Could not find Connect button on {name}'s profile.")
+                        logger.warning(f"[Dispatcher] Could not find Connect button on {name}'s profile ({url}).")
                         self.db.update_lead_status(lead_id, LeadStatus.FAILED)
                         failed_count += 1
                         continue
@@ -334,22 +375,22 @@ class OutreachDispatcher:
                     # Handle invitation note modal
                     sent_success = self._handle_invitation_modal(page, note)
                     if sent_success:
-                        print(f"[Dispatcher] ✅ Connection invite successfully dispatched to {name}!")
+                        logger.info(f"[Dispatcher] ✅ Connection invite successfully dispatched to {name}!")
                         self.db.update_lead_status(lead_id, LeadStatus.SENT)
                         dispatched_count += 1
                     else:
-                        print(f"[Dispatcher] ⚠️ Invitation modal could not be completed for {name}.")
+                        logger.warning(f"[Dispatcher] ⚠️ Invitation modal could not be completed for {name}.")
                         self.db.update_lead_status(lead_id, LeadStatus.FAILED)
                         failed_count += 1
 
                     # Anti-Ban Randomized Delay between consecutive invites
                     if i < len(leads):
                         delay = random.uniform(config.MIN_ACTION_DELAY_SECONDS, config.MAX_ACTION_DELAY_SECONDS)
-                        print(f"[Dispatcher] ⏳ Anti-ban guardrail: Sleeping {delay:.1f}s before next candidate...")
+                        logger.info(f"[Dispatcher] ⏳ Anti-ban guardrail: Sleeping {delay:.1f}s before next candidate...")
                         time.sleep(delay)
 
                 except Exception as e:
-                    print(f"[Dispatcher] Error processing candidate {name}: {e}")
+                    logger.error(f"[Dispatcher] Error processing candidate {name}: {e}", exc_info=True)
                     self.db.update_lead_status(lead_id, LeadStatus.FAILED)
                     failed_count += 1
 

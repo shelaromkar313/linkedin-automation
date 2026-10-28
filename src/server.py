@@ -59,23 +59,32 @@ class N8NRequestHandler(BaseHTTPRequestHandler):
             searcher = XRaySearcher()
             dispatcher = OutreachDispatcher(db=db, ai=ai)
 
-            # 1. Scrape fresh leads if needed
+            # 1. Scrape fresh leads or retry previous failed leads
             pending_count = len(db.get_leads_by_status(LeadStatus.GENERATED, limit=limit))
             leads_discovered = 0
             if pending_count < limit:
                 needed = limit - pending_count
-                logger.info(f"Scraping up to {needed} fresh prospects for {title} in {location}...")
-                xray_q = searcher.build_query(title, keyword, location)
-                logger.info(f"Executing X-Ray Query: {xray_q}")
-                discovered = searcher.search(xray_q, limit=needed)
-                for lead in discovered:
-                    db.add_lead(
-                        name=lead["name"],
-                        headline=lead["headline"],
-                        linkedin_url=lead["linkedin_url"],
-                    )
-                leads_discovered = len(discovered)
-                logger.info(f"Added {leads_discovered} leads to database.")
+                # Reset any previously failed leads to give them a fresh attempt with updated selectors
+                failed_leads = db.get_leads_by_status(LeadStatus.FAILED, limit=needed)
+                for fl in failed_leads:
+                    db.update_lead_status(fl["id"], LeadStatus.PENDING)
+                
+                # Check if we still need more leads from X-Ray search
+                curr_pending = db.get_leads_by_status(LeadStatus.PENDING, limit=needed)
+                if len(curr_pending) < needed:
+                    scrape_needed = needed - len(curr_pending)
+                    logger.info(f"Scraping up to {scrape_needed} fresh prospects for {title} in {location}...")
+                    xray_q = searcher.build_query(title, keyword, location)
+                    logger.info(f"Executing X-Ray Query: {xray_q}")
+                    discovered = searcher.search(xray_q, limit=scrape_needed)
+                    for lead in discovered:
+                        db.add_lead(
+                            name=lead["name"],
+                            headline=lead["headline"],
+                            linkedin_url=lead["linkedin_url"],
+                        )
+                    leads_discovered = len(discovered)
+                    logger.info(f"Added {leads_discovered} leads to database.")
 
             # 2. Personalize connection notes (strict <= 200 chars)
             pending_notes = db.get_leads_by_status(LeadStatus.PENDING, limit=limit)
