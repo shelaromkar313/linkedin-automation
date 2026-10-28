@@ -85,8 +85,8 @@ class N8NRequestHandler(BaseHTTPRequestHandler):
                 db.update_lead_note(p["id"], note)
 
             # 3. Dispatch automated invites
-            logger.info(f"Dispatching automated invites (limit={limit})...")
-            dispatch_results = dispatcher.dispatch_batch(limit=limit, dry_run=dry_run)
+            logger.info(f"Dispatching automated invites (limit={limit}, headless=True)...")
+            dispatch_results = dispatcher.dispatch_batch(limit=limit, dry_run=dry_run, headless=True)
             logger.info(f"Dispatch finished: {dispatch_results}")
 
             # 4. Return results formatted for n8n & Google Sheets

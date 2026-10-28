@@ -191,6 +191,10 @@ class OutreachDispatcher:
         Execute automated outreach dispatch with anti-ban rate limits and delays.
         """
         is_headless = headless if headless is not None else config.HEADLESS
+        # Force headless mode on Linux servers without a physical X11 display
+        if not is_headless and os.name != "nt" and "DISPLAY" not in os.environ:
+            print("[Dispatcher] Linux server environment detected (no DISPLAY). Enforcing headless=True.")
+            is_headless = True
 
         # 1. Check daily rate limit
         sent_today = self.db.count_sent_in_last_24h()

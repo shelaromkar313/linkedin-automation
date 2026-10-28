@@ -37,7 +37,7 @@ class Config:
     MAX_ACTION_DELAY_SECONDS = int(os.getenv("MAX_ACTION_DELAY_SECONDS", "110"))
 
     # 5. Playwright Settings
-    HEADLESS = os.getenv("HEADLESS", "False").lower() in ("true", "1", "yes")
+    HEADLESS = os.getenv("HEADLESS", "True").lower() in ("true", "1", "yes")
     USER_AGENT = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
