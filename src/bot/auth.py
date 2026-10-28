@@ -21,21 +21,12 @@ def setup_linkedin_session(context: BrowserContext) -> bool:
             {
                 "name": "li_at",
                 "value": clean_cookie,
-                "domain": ".www.linkedin.com",
-                "path": "/",
-                "httpOnly": True,
-                "secure": True,
-                "sameSite": "None",
-            },
-            {
-                "name": "li_at",
-                "value": clean_cookie,
                 "domain": ".linkedin.com",
                 "path": "/",
                 "httpOnly": True,
                 "secure": True,
                 "sameSite": "None",
-            },
+            }
         ]
         context.add_cookies(cookies)
         return True

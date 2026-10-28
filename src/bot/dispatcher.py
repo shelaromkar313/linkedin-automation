@@ -307,8 +307,11 @@ class OutreachDispatcher:
             page = context.new_page()
 
             # Verify login status
-            page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded", timeout=30000)
-            page.wait_for_timeout(2000)
+            try:
+                page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded", timeout=30000)
+                page.wait_for_timeout(2500)
+            except Exception as e:
+                logger.warning(f"[Dispatcher] Feed navigation notice: {e}. Checking authentication state...")
 
             if not is_logged_in(page):
                 logger.error(f"[Dispatcher] ❌ Not logged in to LinkedIn! Current URL: {page.url} | Page Title: {page.title()}")
